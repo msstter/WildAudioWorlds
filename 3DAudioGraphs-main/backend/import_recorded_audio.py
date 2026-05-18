@@ -3,6 +3,8 @@ import sys
 import traceback
 from pathlib import Path
 
+from shared_graph_paths import resolve_graph_project_root
+
 try:
     from main import build_project_paths, process_audio_file, upsert_manifest_entry
 except ModuleNotFoundError:
@@ -28,7 +30,7 @@ def main():
 
     include_mfcc = payload.get("includeMfcc") is not False
     asset_label = str(payload.get("assetLabel") or "").strip() or audio_path.stem
-    project_root = Path(str(payload.get("projectRoot") or Path(__file__).resolve().parent.parent)).resolve()
+    project_root = resolve_graph_project_root(payload.get("projectRoot"), anchor_file=__file__)
     paths = build_project_paths(project_root)
 
     manifest_entry = process_audio_file(

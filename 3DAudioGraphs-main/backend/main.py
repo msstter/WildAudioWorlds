@@ -6,6 +6,14 @@ import json
 import shutil
 from pathlib import Path
 
+from shared_graph_paths import resolve_graph_project_root
+from wild_audio_worlds.data.audio_asset_store import (
+    build_project_paths as _shared_build_project_paths,
+    load_manifest_entries as _shared_load_manifest_entries,
+    save_manifest_entries as _shared_save_manifest_entries,
+    upsert_manifest_entry as _shared_upsert_manifest_entry,
+)
+
 
 DEFAULT_TERRAIN_ENVELOPE_VERSION = 2
 DEFAULT_TERRAIN_ENVELOPE_KIND = "terrain-envelope-v2"
@@ -219,43 +227,20 @@ def _list_audio_files(sample_audio_dir):
 
 
 def build_project_paths(project_root=None):
-    resolved_project_root = Path(project_root).resolve() if project_root else Path(__file__).resolve().parent.parent
-    return {
-        "project_root": str(resolved_project_root),
-        "sample_audio_dir": str(resolved_project_root / "data" / "sample_audio"),
-        "exports_dir": str(resolved_project_root / "data" / "exports"),
-        "public_assets_dir": str(resolved_project_root / "frontend" / "public" / "audio_assets"),
-        "manifest_path": str(resolved_project_root / "frontend" / "public" / "audio_assets_manifest.json"),
-    }
+    resolved_project_root = resolve_graph_project_root(project_root, anchor_file=__file__)
+    return _shared_build_project_paths(resolved_project_root)
 
 
 def load_manifest_entries(manifest_path):
-    manifest_file_path = Path(manifest_path)
-    if not manifest_file_path.exists():
-        return []
-
-    with open(manifest_file_path, "r", encoding="utf-8") as manifest_file:
-        payload = json.load(manifest_file)
-
-    if not isinstance(payload, dict) or not isinstance(payload.get("assets"), list):
-        return []
-    return payload["assets"]
+    return _shared_load_manifest_entries(manifest_path)
 
 
 def save_manifest_entries(manifest_path, manifest_entries):
-    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
-    with open(manifest_path, "w", encoding="utf-8") as manifest_file:
-        json.dump({"assets": manifest_entries}, manifest_file, indent=2)
+    _shared_save_manifest_entries(manifest_path, manifest_entries)
 
 
 def upsert_manifest_entry(manifest_path, manifest_entry):
-    manifest_entries = [
-        entry for entry in load_manifest_entries(manifest_path)
-        if str(entry.get("id") or "").strip() != str(manifest_entry.get("id") or "").strip()
-    ]
-    manifest_entries.append(manifest_entry)
-    save_manifest_entries(manifest_path, manifest_entries)
-    return manifest_entries
+    return _shared_upsert_manifest_entry(manifest_path, manifest_entry)
 
 
 def process_audio_file(audio_file, include_mfcc=True, display_name=None, project_root=None, logger=print, audio_proc=None, dim_reducer=None):
