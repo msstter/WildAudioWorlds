@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:;">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Backend Call Monitor</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #081117;
+      --panel: rgba(8, 18, 28, 0.92);
+      --panel-border: rgba(113, 179, 255, 0.18);
+      --accent: #9cc8ff;
+      --accent-strong: #d7ebff;
+      --text: #e7f1fb;
+      --muted: #8ca3bb;
+      --surface: rgba(5, 10, 16, 0.8);
+      --surface-border: rgba(146, 186, 230, 0.16);
+      --shadow: 0 18px 52px rgba(0, 0, 0, 0.32);
+      font-family: Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(circle at top left, rgba(90, 143, 214, 0.18), transparent 36%),
+        radial-gradient(circle at bottom right, rgba(120, 255, 219, 0.1), transparent 28%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .page {
+      width: min(1120px, calc(100vw - 24px));
+      margin: 0 auto;
+      padding: 20px 0 28px;
+      display: grid;
+      gap: 14px;
+    }
+
+    .header {
+      padding: 18px 20px;
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+    }
+
+    .header h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      color: var(--accent-strong);
+      letter-spacing: 0.03em;
+    }
+
+    .header p {
+      margin: 0;
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 12px;
+    }
+
+    .status-banner {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--accent-strong);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .card {
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      padding: 16px 18px;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      color: var(--accent-strong);
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      align-items: end;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 11px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    select,
+    input,
+    button {
+      font: inherit;
+    }
+
+    select,
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid var(--surface-border);
+      background: var(--surface);
+      color: var(--text);
+    }
+
+    .controls-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+
+    .inline-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .inline-row button {
+      white-space: nowrap;
+    }
+
+    .subsection-title {
+      color: var(--accent-strong);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .bio-handler {
+      display: none;
+      gap: 12px;
+      margin-top: 14px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    button {
+      border: none;
+      border-radius: 999px;
+      padding: 10px 16px;
+      cursor: pointer;
+      background: var(--accent);
+      color: #061018;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+    }
+
+    button.secondary {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.5;
+    }
+
+    .analysis-help,
+    .selection-status {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--muted);
+      line-height: 1.55;
+      font-size: 12px;
+    }
+
+    .facts {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px 18px;
+    }
+
+    .fact {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .fact-label {
+      color: var(--muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      margin-bottom: 6px;
+    }
+
+    .fact-value {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .split-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 14px;
+    }
+
+    pre {
+      margin: 0;
+      min-height: 240px;
+      max-height: 360px;
+      overflow: auto;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(3, 8, 12, 0.9);
+      color: #cfe3f8;
+      line-height: 1.55;
+      font-size: 11px;
+    }
+
+    .log-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .log-header span {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .log-list {
+      display: grid;
+      gap: 10px;
+      max-height: 300px;
+      overflow: auto;
+    }
+
+    .log-entry {
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .log-entry[data-level="error"] {
+      border-color: rgba(255, 143, 143, 0.22);
+    }
+
+    .log-entry[data-level="warn"] {
+      border-color: rgba(255, 207, 128, 0.22);
+    }
+
+    .log-meta {
+      color: var(--muted);
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+
+    .log-message {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .log-details {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px dashed rgba(255, 255, 255, 0.08);
+      color: #a7bfd9;
+      font-size: 11px;
+      line-height: 1.5;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100vw, calc(100vw - 16px));
+        padding-top: 12px;
+      }
+
+      .card,
+      .header {
+        border-radius: 14px;
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="header">
+      <h1>Backend Call Monitor</h1>
+      <p>Inspect the current rendered SpectroTerrain slice alongside the final Full Sculpt Mask that backend actions and exports will actually use, then review the request, response, and log stream in one place.</p>
+      <div id="connection-status" class="status-banner">Waiting for the Electron bridge.</div>
+    </section>
+
+    <section class="card">
+      <h2>Call Setup</h2>
+      <div class="controls-grid">
+        <label>
+          Backend Action
+          <select id="analysis-type">
+            <option value="slice-summary">Slice Summary</option>
+            <option value="mfcc-profile">MFCC Profile</option>
+            <option value="spectral-shape">Spectral Shape</option>
+            <option value="export-time-slice-audio">Export Time Slice Audio</option>
+            <option value="export-spectral-mask-audio">Export Sculpted Spectral Mask Audio</option>
+            <option value="bioacoustics-import-workbook">Bioacoustics: Import Workbook Onsets</option>
+            <option value="bioacoustics-sync-workbook">Bioacoustics: Sync Workbook</option>
+          </select>
+        </label>
+        <label>
+          Save Output
+          <select id="save-mode">
+            <option value="json">Save JSON to data/exports/backend_calls</option>
+            <option value="wav">Save WAV to data/exports/backend_calls</option>
+            <option value="none">Do Not Save a File</option>
+          </select>
+        </label>
+        <label>
+          Save Label
+          <input id="save-label" type="text" placeholder="Optional result label">
+        </label>
+      </div>
+      <div id="bio-handler-section" class="bio-handler">
+        <div class="subsection-title">Bioacoustics App Handler</div>
+        <div class="controls-grid">
+          <label>
+            Workbook / Folder Path
+            <div class="inline-row">
+              <input id="bio-workbook-path" type="text" placeholder="Choose AudioData_OnsetFinder.xlsx or a Bioacoustics output folder">
+              <button id="bio-workbook-browse-btn" type="button" class="secondary">Browse</button>
+            </div>
+          </label>
+          <label id="bio-output-mode-field">
+            Workbook Output
+            <select id="bio-output-mode">
+              <option value="duplicate">Duplicate Existing Workbook</option>
+              <option value="overwrite">Overwrite Existing Workbook</option>
+              <option value="new-compatible">Create New Compatible Workbook</option>
+            </select>
+          </label>
+        </div>
+        <div id="bio-status" class="analysis-help"></div>
+        <div class="facts">
+          <div class="fact"><div class="fact-label">Current Timbre Target</div><div id="bio-fact-target" class="fact-value"></div></div>
+          <div class="fact"><div class="fact-label">Available Onsets</div><div id="bio-fact-onsets" class="fact-value"></div></div>
+          <div class="fact"><div class="fact-label">Imported Workbook State</div><div id="bio-fact-imported" class="fact-value"></div></div>
+        </div>
+      </div>
+      <div id="analysis-help" class="analysis-help"></div>
+      <div class="controls-actions">
+        <button id="run-call-btn" type="button">Run Backend Call</button>
+        <button id="clear-logs-btn" type="button" class="secondary">Clear Logs</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Rendered Slice + Full Sculpt Mask</h2>
+      <div id="selection-status" class="selection-status">Waiting for a selection snapshot.</div>
+      <div class="facts">
+        <div class="fact"><div class="fact-label">Asset</div><div id="fact-asset" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Visualization</div><div id="fact-mode" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Selection Model</div><div id="fact-selection-model" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Currently Selected</div><div id="fact-current-target" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Selection Source</div><div id="fact-source" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Active Selection Spaces</div><div id="fact-planes" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Rendered Slice Window</div><div id="fact-visible-frames" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Full Sculpt Frame Range</div><div id="fact-slice-frames" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Full Sculpt Time Range</div><div id="fact-time" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Full Sculpt Frequency Range</div><div id="fact-frequency" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Full Sculpt Amplitude Range</div><div id="fact-amplitude" class="fact-value"></div></div>
+        <div class="fact"><div class="fact-label">Playback + Render Snapshot</div><div id="fact-playback" class="fact-value"></div></div>
+      </div>
+    </section>
+
+    <section class="split-grid">
+      <section class="card">
+        <h2>Request Preview</h2>
+        <pre id="request-preview">Waiting for a selection snapshot.</pre>
+      </section>
+      <section class="card">
+        <h2>Latest Result</h2>
+        <pre id="result-preview">No backend calls yet.</pre>
+      </section>
+    </section>
+
+    <section class="card">
+      <div class="log-header">
+        <h2>Call Log</h2>
+        <span id="log-count">0 entries</span>
+      </div>
+      <div id="call-log" class="log-list"></div>
+    </section>
+  </div>
+
+  <script src="/backend-call-monitor.js"></script>
+</body>
+</html>

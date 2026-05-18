@@ -1,0 +1,69 @@
+# OS / editor noise
+.DS_Store
+._*
+Thumbs.db
+.vscode/
+
+# Python caches / tooling
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.conda/
+.venv/
+venv/
+env/
+
+# Local runtime config
+pipeline_config.json
+
+# Logs / local test output
+*.log
+full_results.log
+test_results.log
+test_results.txt
+test_phase12_out.txt
+test_phase3_out.txt
+
+# Built app artifacts
+build/
+dist/
+GUI/BioacousticsRhythmPipeline.exe
+GUI/Bioacoustics Rhythm Pipeline.app/
+
+# Local / private docs and reference material
+docs/personal/
+BioacousticsProject_ForReference/
+2025_Eleuteri+20_Chimpanzee drumming shows rhythmicity and subspecies variation_SUPPMAT/
+
+# User data and generated pipeline outputs
+audioFiles/
+*_muted_clean/
+*_rejected_noise/
+*_hpss_harmonic/
+*_hpss_percussive/
+*_mfcc_clean/
+Cross_Species_Rhythm_Data.xlsx
+
+# Generated analysis/output folders
+AnalysisReports/
+Association_Rules/
+GLMM/
+Histogram_Plots/
+KS_Test/
+Lag1_Autocorrelation/
+Mantel_Test/
+nPVI_Group_Plots/
+pDFA/
+PGLS/
+Raincloud_Metrics/
+Raster_Plots/
+Rhythm_Ratios/
+Tempo_Ratio_Heatmap/
+Wilcoxon_Isochrony/
+data/

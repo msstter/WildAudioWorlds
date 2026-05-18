@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wild-audio-worlds"
+version = "0.1.0"
+description = "Shared services and integration package for WildAudioWorlds."
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools]
+package-dir = {"" = "packages"}
+
+[tool.setuptools.packages.find]
+where = ["packages"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,66 @@
+# OS and editor noise
+.DS_Store
+._.DS_Store
+._*
+Thumbs.db
+.vscode/
+
+# Local environments
+.venv/
+.venv*/
+venv/
+.conda-backend/
+
+# Python caches and test artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node and Electron build outputs
+frontend/node_modules/
+frontend/build/
+frontend/dist/
+frontend/dist-renderer/
+frontend/dist-fpv-validate/
+frontend/dist-live-validate/
+
+# Local-only bundled audio/data assets
+frontend/public/audio_assets/
+frontend/public/audio_3d_coordinates.csv
+frontend/public/audio_3d_coordinates_FFT.csv
+frontend/public/bird_test.wav
+
+# Logs and local run markers
+*.log
+*.exit
+
+# Environment files and local overrides
+.env
+.env.*
+*.local
+
+# Local temp files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.swp
+~$*
+
+# Personal and reference material
+docs/personal/
+BioacousticsProject_ForReference/
+
+# Generated backend exports
+data/exports/**
+!data/exports/.gitkeep
+
+# Backend sample-audio working data
+data/sample_audio/**
+!data/sample_audio/.gitkeep

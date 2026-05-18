@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:5173 http://localhost:5173 ws://127.0.0.1:5173 ws://localhost:5173; media-src 'self' data: blob:;">
+  <title>3D Audio Maker</title>
+  <link rel="stylesheet" href="/src/styles/base.css">
+  <link rel="stylesheet" href="/src/styles/panels.css">
+  <link rel="stylesheet" href="/src/styles/transport.css">
+  <link rel="stylesheet" href="/src/styles/dialogs.css">
+</head>
+<body>
+  <div id="ui-container">
+    <div class="transport-buttons">
+      <button id="restart-btn">⏮</button>
+      <button id="play-btn">▶</button>
+      <div id="speed-control">
+        <button id="speed-btn">⚙ 1x</button>
+        <div id="speed-menu" aria-label="Playback speed menu">
+          <div class="speed-grid">
+            <button class="speed-option" data-rate="0.25">0.25x</button>
+            <button class="speed-option" data-rate="0.5">0.5x</button>
+            <button class="speed-option" data-rate="0.75">0.75x</button>
+            <button class="speed-option" data-rate="1">1x</button>
+            <button class="speed-option" data-rate="1.25">1.25x</button>
+            <button class="speed-option" data-rate="1.5">1.5x</button>
+            <button class="speed-option" data-rate="2">2x</button>
+            <button id="custom-speed-btn">Custom</button>
+          </div>
+          <div id="custom-speed-row">
+            <label for="custom-speed-input">Custom</label>
+            <input id="custom-speed-input" type="number" min="0.01" max="20" step="0.01" value="1.00">
+            <button id="apply-custom-speed-btn">Apply</button>
+          </div>
+          <label id="preserve-pitch-row">
+            <input id="preserve-pitch-checkbox" type="checkbox" checked>
+            Preserve Pitch
+          </label>
+        </div>
+      </div>
+    </div>
+    <span id="time-display">0:00 / 0:00</span>
+    <input type="range" id="progress-bar" value="0" min="0" step="0.1">
+    <button id="record-btn" title="Record Window">
+      <div class="record-dot"></div>
+    </button>
+    <button id="backend-call-btn" title="Call Backend">📞</button>
+  </div>
+
+  <!-- Recording and camera settings modal -->
+  <div id="rec-modal-overlay">
+    <div id="rec-modal">
+      <h3>&#9210; Recording &amp; Camera Settings</h3>
+
+      <div class="rec-field">
+        <label for="rec-resolution">Resolution</label>
+        <select id="rec-resolution">
+          <option value="720">720p (1280 &times; 720)</option>
+          <option value="1080" selected>1080p (1920 &times; 1080)</option>
+          <option value="1440">1440p (2560 &times; 1440)</option>
+          <option value="2160">4K (3840 &times; 2160)</option>
+        </select>
+      </div>
+
+      <div class="rec-field">
+        <label for="rec-format">File Type</label>
+        <select id="rec-format">
+          <option value="mp4">MP4 (.mp4)</option>
+          <option value="webm">WebM (.webm)</option>
+          <option value="mkv">MKV (.mkv)</option>
+          <option value="mov">MOV (.mov)</option>
+          <option value="m4v">M4V (.m4v)</option>
+          <option value="m4p">M4P (.m4p)</option>
+        </select>
+      </div>
+
+      <label id="rec-gif-row">
+        <input type="checkbox" id="rec-gif-toggle">
+        Record as Animated Image (GIF mode)
+      </label>
+
+      <label id="rec-audio-row">
+        <input type="checkbox" id="rec-audio-toggle" checked>
+        Include Audio
+      </label>
+
+      <button id="rec-start-btn">
+        <div class="btn-dot"></div>
+        Start Recording
+      </button>
+      <button id="rec-cancel-btn">Cancel</button>
+    </div>
+  </div>
+
+  <div id="live-source-modal-overlay">
+    <div id="live-source-modal">
+      <h3>Live Performance Source</h3>
+      <p class="live-source-note">
+        Pick a microphone source, choose the FFT resolution for SpectroTerrain,
+        then start either a live stream, a live recording session, or a new recorded asset import.
+      </p>
+
+      <div class="rec-field">
+        <label for="live-source-input">Microphone</label>
+        <select id="live-source-input"></select>
+      </div>
+
+      <div class="rec-field">
+        <label for="live-source-fft-size">FFT Size</label>
+        <select id="live-source-fft-size">
+          <option value="256">256 (128 terrain bins)</option>
+          <option value="512" selected>512 (256 terrain bins)</option>
+          <option value="1024">1024 (512 terrain bins)</option>
+        </select>
+      </div>
+
+      <label class="rec-checkbox-row" id="live-source-monitor-row">
+        <input type="checkbox" id="live-source-monitor-toggle">
+        Monitor live audio output (may cause feedback)
+      </label>
+
+      <div class="live-source-status-row">
+        <span class="live-source-status-label">Status</span>
+        <span id="live-source-status-text" data-mode="inactive">Inactive</span>
+      </div>
+
+      <div id="live-source-progress-block" class="live-source-progress-block" hidden>
+        <div class="live-source-progress-meta">
+          <span class="live-source-status-label">Progress</span>
+          <span id="live-source-progress-text">Idle</span>
+        </div>
+        <progress id="live-source-progress-bar" max="100" value="0"></progress>
+      </div>
+
+      <div class="rec-section live-source-import-section">
+        <p class="rec-section-title">Record New Asset</p>
+        <p class="rec-section-note">
+          Capture a microphone take, save it into the local project audio folder, analyze it,
+          and add it to the Audio/Data list automatically.
+        </p>
+
+        <div class="rec-field">
+          <label for="live-source-asset-label">Asset Label</label>
+          <input type="text" id="live-source-asset-label" placeholder="Recorded session">
+        </div>
+
+        <label class="rec-checkbox-row" id="live-source-mfcc-row">
+          <input type="checkbox" id="live-source-include-mfcc-toggle" checked>
+          Also generate MFCC / TimbreCube data
+        </label>
+      </div>
+
+      <div class="live-source-actions">
+        <button id="live-source-refresh-btn" class="rec-secondary-btn" type="button">Refresh Inputs</button>
+        <button id="live-source-stream-btn" class="rec-secondary-btn" type="button">Stream</button>
+        <button id="live-source-record-btn" class="rec-secondary-btn" type="button">Record Live</button>
+        <button id="live-source-capture-btn" class="rec-secondary-btn" type="button">Record New Asset</button>
+        <button id="live-source-cancel-btn" class="rec-danger-btn" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

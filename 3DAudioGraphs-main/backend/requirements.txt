@@ -1,0 +1,7 @@
+librosa
+umap-learn
+scikit-learn
+numpy
+websockets
+pandas
+openpyxl

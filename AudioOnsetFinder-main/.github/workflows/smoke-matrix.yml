@@ -1,0 +1,60 @@
+name: Cross-Platform Smoke
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  smoke:
+    name: Smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+          - windows-2025
+    env:
+      CONDA_ENV: rhythm_ci
+      MPLBACKEND: Agg
+      PYTHONUTF8: "1"
+      QT_QPA_PLATFORM: offscreen
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up CI Conda environment
+        uses: conda-incubator/setup-miniconda@v4
+        with:
+          auto-activate: false
+          channels: conda-forge
+          conda-remove-defaults: "true"
+          environment-file: environment-ci.yml
+          activate-environment: ${{ env.CONDA_ENV }}
+          miniforge-version: latest
+          use-mamba: true
+
+      - name: Install pip-only dependencies
+        run: conda run -n ${{ env.CONDA_ENV }} python -m pip install "thebeat>=0.3"
+
+      - name: Run smoke helper on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          conda run -n ${{ env.CONDA_ENV }} powershell -ExecutionPolicy Bypass -File scripts/refactor_guardrails.ps1 smoke
+
+      - name: Run smoke helper on macOS and Linux
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          conda run -n ${{ env.CONDA_ENV }} bash scripts/refactor_guardrails.sh smoke

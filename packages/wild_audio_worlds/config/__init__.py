@@ -1,0 +1,1 @@
+"""Shared configuration services and models."""

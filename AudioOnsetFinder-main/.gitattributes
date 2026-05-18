@@ -1,0 +1,10 @@
+# Normalize text files across Windows and macOS by default.
+* text=auto eol=lf
+
+# Keep Windows-native scripts on CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Keep POSIX shell scripts on LF.
+*.sh text eol=lf

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Bioacoustics Rhythm Pipeline
+Comment=Configure and run the bioacoustics rhythm analysis pipeline
+Exec=bash -c 'cd "$(dirname "$(dirname "$(readlink -f "%k")")")" && PYTHON=""; for p in "$HOME/anaconda3/envs/rhythm_env/bin/python" "$HOME/miniconda3/envs/rhythm_env/bin/python" "/opt/anaconda3/envs/rhythm_env/bin/python"; do [ -x "$p" ] && PYTHON="$p" && break; done; [ -z "$PYTHON" ] && PYTHON=python3; exec "$PYTHON" GUI/pipeline_gui.py'
+Icon=ICON_PATH_PLACEHOLDER
+Terminal=false
+Categories=Science;Education;

@@ -1,0 +1,26 @@
+name: rhythm_env
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - librosa=0.11
+  - numpy>=1.26
+  - pandas>=2.2
+  - matplotlib>=3.8
+  - scipy>=1.12
+  - pysoundfile>=0.13
+  - openpyxl>=3.1
+  - cython>=3.0
+  - pyqt6>=6.11
+  - pip
+  - pip:
+    - noisereduce>=3.0
+    - plotly>=6.0
+    - thebeat>=0.3
+    - pyqtgraph>=0.13
+    - sounddevice>=0.4
+    - praat-parselmouth>=0.4
+    - openai-whisper>=20231117
+    - whisperx>=3.1
+    - torchcrepe>=0.0.22

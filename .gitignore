@@ -1,0 +1,55 @@
+# macOS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Environments
+.venv/
+venv/
+env/
+ENV/
+.conda/
+.conda-backend/
+
+# Node / Electron
+node_modules/
+dist/
+dist-renderer/
+out/
+release/
+
+# WildAudioWorlds future managed data roots
+data/source/raw_audio/
+data/source/downloaded_model_inputs/
+data/derived/
+data/sessions/
+data/exports/
+
+# 3DAudioGraphs generated working data
+3DAudioGraphs-main/data/sample_audio/
+3DAudioGraphs-main/data/exports/
+3DAudioGraphs-main/frontend/public/audio_assets/
+3DAudioGraphs-main/frontend/public/audio_assets_manifest.json
+3DAudioGraphs-main/frontend/dist-renderer/
+3DAudioGraphs-main/frontend/node_modules/
+
+# AudioOnsetFinder generated working data
+AudioOnsetFinder-main/audioFiles/
+AudioOnsetFinder-main/audioFiles_muted_clean/
+AudioOnsetFinder-main/audioFiles_rejected_noise/
+AudioOnsetFinder-main/Raster_Plots/
+AudioOnsetFinder-main/Histogram_Plots/
+AudioOnsetFinder-main/Cross_Species_Rhythm_Data*.xlsx
+AudioOnsetFinder-main/**/*.label.txt
+
+# Logs and local overrides
+*.log
+.env
+.env.local

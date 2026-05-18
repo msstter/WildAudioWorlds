@@ -1,0 +1,54 @@
+{
+  "name": "3d-audio-frontend",
+  "version": "1.0.0",
+  "description": "Interactive Electron app for exploring and sculpting 3D audio data.",
+  "author": "3D Audio Graph contributors",
+  "type": "module",
+  "main": "main.cjs",
+  "engines": {
+    "node": ">=24 <25",
+    "npm": ">=11 <12"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
+    "build": "vite build",
+    "electron:dev": "node scripts/electron-dev.cjs",
+    "electron:build": "npm run build && electron-builder",
+    "electron:build:mac:intel": "npm run build && electron-builder --mac --x64",
+    "electron:build:mac:arm": "npm run build && electron-builder --mac --arm64",
+    "electron:build:mac:universal": "npm run build && electron-builder --mac --universal",
+    "preelectron:build:win": "node scripts/stop-win-unpacked-locks.cjs",
+    "electron:build:win": "npm run build && electron-builder --win --x64",
+    "electron:build:linux": "npm run build && electron-builder --linux --x64"
+  },
+  "dependencies": {
+    "gifenc": "^1.0.3",
+    "lil-gui": "^0.21.0",
+    "three": "^0.184.0"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "electron": "^42.1.0",
+    "electron-builder": "^26.8.1",
+    "nodemon": "^3.1.14",
+    "vite": "^8.0.13",
+    "wait-on": "^9.0.10"
+  },
+  "build": {
+    "appId": "com.3daudio.app",
+    "productName": "3D Audio Maker",
+    "mac": {
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "src/build/icon.icns"
+    },
+    "files": [
+      "dist-renderer/**/*",
+      "main.cjs",
+      "preload.cjs",
+      "node_modules/**/*"
+    ]
+  }
+}
