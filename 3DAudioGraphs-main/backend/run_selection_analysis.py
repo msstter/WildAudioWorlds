@@ -19,6 +19,11 @@ from wild_audio_worlds.session.analysis_types import (
 from wild_audio_worlds.session.command_contracts import (
     parse_backend_analysis_request_json,
 )
+from wild_audio_worlds.session.selection_contracts import (
+    normalize_selection_amplitude_pct_range,
+    normalize_selection_frequency_window,
+    normalize_selection_time_window,
+)
 
 try:
     from bioacoustics_workbook import load_onsets_for_audio, sync_workbook_onsets
@@ -380,46 +385,14 @@ def _run_bioacoustics_sync_workbook(payload):
 
 def _resolve_selection_window(asset_payload, selection_payload):
     clip_duration_sec = _coerce_float((asset_payload or {}).get("analysisClipDurationSec"), 0.0)
-    time_range = (selection_payload or {}).get("timeRangeSec") or {}
-
-    start_sec = _coerce_float(time_range.get("start"), 0.0)
-    end_sec = _coerce_float(time_range.get("end"), clip_duration_sec)
-
-    if clip_duration_sec > 0:
-        start_sec = _clamp(start_sec, 0.0, clip_duration_sec)
-        end_sec = _clamp(end_sec, 0.0, clip_duration_sec)
-    else:
-        start_sec = max(0.0, start_sec)
-        end_sec = max(0.0, end_sec)
-
-    if end_sec <= start_sec:
-        raise ValueError("Selection time window is empty. Enable terrain plane selections that define a non-zero time slice.")
-
-    return {
-        "startSec": start_sec,
-        "endSec": end_sec,
-        "durationSec": end_sec - start_sec,
-    }
+    return normalize_selection_time_window(selection_payload, clip_duration_sec)
 
 
 def _resolve_frequency_window(asset_payload, selection_payload, available_bin_count):
-    frequency_range = (selection_payload or {}).get("frequencyBinRange") or {}
     preferred_total_bins = _coerce_int(
-        frequency_range.get("totalBins"),
         max(1, min(available_bin_count, (asset_payload or {}).get("analysisFftNfft") or DEFAULT_DISPLAY_BIN_COUNT)),
     )
-    total_bins = max(1, min(available_bin_count, preferred_total_bins))
-
-    start_bin = _coerce_int(frequency_range.get("startBin"), 0)
-    end_bin = _coerce_int(frequency_range.get("endBin"), total_bins - 1)
-    start_bin = _clamp(start_bin, 0, max(0, total_bins - 1))
-    end_bin = _clamp(end_bin, start_bin, max(0, total_bins - 1))
-
-    return {
-        "startBin": start_bin,
-        "endBin": end_bin,
-        "totalBins": total_bins,
-    }
+    return normalize_selection_frequency_window(selection_payload, available_bin_count, preferred_total_bins)
 
 
 def _stats(values):
@@ -520,16 +493,13 @@ def _build_common_metrics(y, sr, asset_payload, selection_payload):
 
 def _run_slice_summary(y, sr, asset_payload, selection_payload):
     metrics = _build_common_metrics(y, sr, asset_payload, selection_payload)
-    selection = selection_payload or {}
+    amplitude_range = normalize_selection_amplitude_pct_range(selection_payload)
 
     return {
         "summary": {
             **metrics["common"],
             "selectionFrequencyWindow": metrics["frequencyWindow"],
-            "selectionAmplitudePctRange": {
-                "min": _coerce_float((selection.get("amplitudePctRange") or {}).get("min"), 0.0),
-                "max": _coerce_float((selection.get("amplitudePctRange") or {}).get("max"), 100.0),
-            },
+            "selectionAmplitudePctRange": amplitude_range,
         },
     }
 
@@ -578,7 +548,8 @@ def _run_spectral_shape(y, sr, asset_payload, selection_payload):
 
 def _run_export_time_slice_audio(y, sr, asset_payload, selection_payload):
     del asset_payload
-    selection = selection_payload or {}
+    amplitude_range = normalize_selection_amplitude_pct_range(selection_payload)
+    frequency_range = (selection_payload or {}).get("frequencyBinRange") or {}
     peak_abs = float(np.max(np.abs(y))) if y.size > 0 else 0.0
     rms_value = float(np.sqrt(np.mean(np.square(y)))) if y.size > 0 else 0.0
 
@@ -590,8 +561,8 @@ def _run_export_time_slice_audio(y, sr, asset_payload, selection_payload):
             "durationSec": float(y.shape[0] / sr) if sr else 0.0,
             "peakAbs": peak_abs,
             "rms": rms_value,
-            "selectionFrequencyWindow": selection.get("frequencyBinRange") or {},
-            "selectionAmplitudePctRange": selection.get("amplitudePctRange") or {},
+            "selectionFrequencyWindow": frequency_range,
+            "selectionAmplitudePctRange": amplitude_range,
             "notes": [
                 "This export uses the shared full-clip time slice.",
                 "Frequency and amplitude sculpt masking are not yet applied in this export path.",
@@ -606,7 +577,6 @@ def _run_export_time_slice_audio(y, sr, asset_payload, selection_payload):
 
 
 def _run_export_spectral_mask_audio(y, sr, asset_payload, selection_payload):
-    selection = selection_payload or {}
     hop_length = max(1, _coerce_int((asset_payload or {}).get("analysisHopLength"), DEFAULT_HOP_LENGTH))
     fft_nfft = max(128, _coerce_int((asset_payload or {}).get("analysisFftNfft"), DEFAULT_FFT_NFFT))
     stft = librosa.stft(y, n_fft=fft_nfft, hop_length=hop_length)
@@ -617,9 +587,9 @@ def _run_export_spectral_mask_audio(y, sr, asset_payload, selection_payload):
         raise ValueError("Unable to build an STFT for the requested selection.")
 
     frequency_window = _resolve_frequency_window(asset_payload, selection_payload, available_bin_count)
-    amplitude_range = selection.get("amplitudePctRange") or {}
-    amplitude_min_pct = _clamp(_coerce_float(amplitude_range.get("min"), 0.0), 0.0, 100.0)
-    amplitude_max_pct = _clamp(_coerce_float(amplitude_range.get("max"), 100.0), amplitude_min_pct, 100.0)
+    amplitude_range = normalize_selection_amplitude_pct_range(selection_payload, clamp_values=True)
+    amplitude_min_pct = amplitude_range["min"]
+    amplitude_max_pct = amplitude_range["max"]
 
     combined_mask = np.zeros_like(magnitudes, dtype=bool)
     selected_frequency_band = magnitudes[

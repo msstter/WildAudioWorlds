@@ -6,7 +6,7 @@ const path = require('path');
 
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
 const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
-const SHARED_SESSION_ANALYSIS_TYPES_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'analysis_types.cjs');
+const SHARED_SESSION_COMMAND_CONTRACTS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'command_contracts.cjs');
 const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
     ? require(SHARED_GRAPH_PATHS_MODULE)
     : {
@@ -14,8 +14,8 @@ const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
         resolveBackendRunnerPath: (frontendDir) => path.join(path.resolve(frontendDir, '..'), 'backend', 'run_selection_analysis.py'),
         resolveRecordedAudioImportRunnerPath: (frontendDir) => path.join(path.resolve(frontendDir, '..'), 'backend', 'import_recorded_audio.py'),
     };
-const sessionAnalysisTypes = fs.existsSync(SHARED_SESSION_ANALYSIS_TYPES_MODULE)
-    ? require(SHARED_SESSION_ANALYSIS_TYPES_MODULE)
+const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
+    ? require(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     : {
         DEFAULT_BACKEND_ANALYSIS_TYPE: 'slice-summary',
         normalizeBackendAnalysisType(value) {
@@ -48,15 +48,121 @@ const sessionAnalysisTypes = fs.existsSync(SHARED_SESSION_ANALYSIS_TYPES_MODULE)
         isBioacousticsSyncAnalysisType(analysisType) {
             return this.normalizeBackendAnalysisType(analysisType) === 'bioacoustics-sync-workbook';
         },
+        normalizeBackendSelectionContract(selectionPayload) {
+            const selection = selectionPayload && typeof selectionPayload === 'object' && !Array.isArray(selectionPayload)
+                ? { ...selectionPayload }
+                : {};
+            return {
+                ...selection,
+                isReady: !!selection.isReady,
+                frameRange: selection.frameRange && typeof selection.frameRange === 'object' && !Array.isArray(selection.frameRange)
+                    ? { ...selection.frameRange }
+                    : {},
+                sampleRange: selection.sampleRange && typeof selection.sampleRange === 'object' && !Array.isArray(selection.sampleRange)
+                    ? { ...selection.sampleRange }
+                    : {},
+                timeRangeSec: selection.timeRangeSec && typeof selection.timeRangeSec === 'object' && !Array.isArray(selection.timeRangeSec)
+                    ? { ...selection.timeRangeSec }
+                    : {},
+                frequencyBinRange: selection.frequencyBinRange && typeof selection.frequencyBinRange === 'object' && !Array.isArray(selection.frequencyBinRange)
+                    ? { ...selection.frequencyBinRange }
+                    : {},
+                amplitudePctRange: selection.amplitudePctRange && typeof selection.amplitudePctRange === 'object' && !Array.isArray(selection.amplitudePctRange)
+                    ? { ...selection.amplitudePctRange }
+                    : {},
+            };
+        },
+        normalizeBackendRequestState(baseState, runOptions = {}) {
+            const requestState = runOptions?.requestState && typeof runOptions.requestState === 'object' && !Array.isArray(runOptions.requestState)
+                ? runOptions.requestState
+                : baseState;
+            const normalizedState = requestState && typeof requestState === 'object' && !Array.isArray(requestState)
+                ? { ...requestState }
+                : {};
+            const requestBioState = normalizedState.bioacoustics && typeof normalizedState.bioacoustics === 'object' && !Array.isArray(normalizedState.bioacoustics)
+                ? { ...normalizedState.bioacoustics }
+                : {};
+            const bioacousticsOptions = runOptions?.bioacousticsOptions && typeof runOptions.bioacousticsOptions === 'object' && !Array.isArray(runOptions.bioacousticsOptions)
+                ? { ...runOptions.bioacousticsOptions }
+                : {};
+
+            return {
+                asset: normalizedState.asset && typeof normalizedState.asset === 'object' && !Array.isArray(normalizedState.asset)
+                    ? { ...normalizedState.asset }
+                    : null,
+                selection: this.normalizeBackendSelectionContract(normalizedState.selection),
+                uiContext: normalizedState.uiContext && typeof normalizedState.uiContext === 'object' && !Array.isArray(normalizedState.uiContext)
+                    ? { ...normalizedState.uiContext }
+                    : {},
+                bioacoustics: {
+                    ...requestBioState,
+                    ...bioacousticsOptions,
+                },
+            };
+        },
+        normalizeBackendAnalysisRequest(payload) {
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+                throw new TypeError('Selection analysis payload must be a JSON object.');
+            }
+            const normalizedPayload = { ...payload };
+            const saveOptions = normalizedPayload.saveOptions && typeof normalizedPayload.saveOptions === 'object' && !Array.isArray(normalizedPayload.saveOptions)
+                ? { ...normalizedPayload.saveOptions }
+                : {};
+            const callMeta = normalizedPayload.callMeta && typeof normalizedPayload.callMeta === 'object' && !Array.isArray(normalizedPayload.callMeta)
+                ? { ...normalizedPayload.callMeta }
+                : {};
+            const analysisType = this.normalizeBackendAnalysisType(normalizedPayload.analysisType);
+
+            return {
+                analysisType,
+                asset: normalizedPayload.asset && typeof normalizedPayload.asset === 'object' && !Array.isArray(normalizedPayload.asset)
+                    ? { ...normalizedPayload.asset }
+                    : {},
+                selection: this.normalizeBackendSelectionContract(normalizedPayload.selection),
+                uiContext: normalizedPayload.uiContext && typeof normalizedPayload.uiContext === 'object' && !Array.isArray(normalizedPayload.uiContext)
+                    ? { ...normalizedPayload.uiContext }
+                    : {},
+                bioacoustics: normalizedPayload.bioacoustics && typeof normalizedPayload.bioacoustics === 'object' && !Array.isArray(normalizedPayload.bioacoustics)
+                    ? { ...normalizedPayload.bioacoustics }
+                    : {},
+                saveOptions: {
+                    ...saveOptions,
+                    mode: this.normalizeBackendSaveMode(analysisType, saveOptions.mode || 'json'),
+                    label: typeof saveOptions.label === 'string' ? saveOptions.label.trim() : '',
+                },
+                callMeta: {
+                    ...callMeta,
+                    requestId: typeof callMeta.requestId === 'string' ? callMeta.requestId.trim() : '',
+                    requestedAt: typeof callMeta.requestedAt === 'string' ? callMeta.requestedAt.trim() : '',
+                },
+            };
+        },
+        buildBackendAnalysisRequest(baseState, runOptions = {}, overrides = {}) {
+            const requestState = this.normalizeBackendRequestState(baseState, runOptions);
+            return this.normalizeBackendAnalysisRequest({
+                ...requestState,
+                analysisType: runOptions?.analysisType,
+                saveOptions: {
+                    mode: runOptions?.saveMode,
+                    label: runOptions?.saveLabel,
+                },
+                callMeta: {
+                    requestId: overrides.requestId || runOptions?.requestId || '',
+                    requestedAt: overrides.requestedAt || runOptions?.requestedAt || '',
+                },
+            });
+        },
     };
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
+    buildBackendAnalysisRequest,
     isBioacousticsAnalysisType,
     isBioacousticsImportAnalysisType,
     isBioacousticsSyncAnalysisType,
     normalizeBackendAnalysisType,
+    normalizeBackendRequestState,
     normalizeBackendSaveMode,
-} = sessionAnalysisTypes;
+} = sessionCommandContracts;
 
 let mainWindow;
 let backendMonitorWindow = null;
@@ -280,28 +386,6 @@ function toNodeBuffer(value) {
         return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     }
     return null;
-}
-
-function mergeRequestState(baseState, runOptions = {}) {
-    const requestState = runOptions?.requestState && typeof runOptions.requestState === 'object'
-        ? runOptions.requestState
-        : baseState;
-    const requestBioState = requestState?.bioacoustics && typeof requestState.bioacoustics === 'object'
-        ? requestState.bioacoustics
-        : {};
-    const bioacousticsOptions = runOptions?.bioacousticsOptions && typeof runOptions.bioacousticsOptions === 'object'
-        ? runOptions.bioacousticsOptions
-        : {};
-
-    return {
-        asset: requestState?.asset ?? null,
-        selection: requestState?.selection ?? null,
-        uiContext: requestState?.uiContext ?? {},
-        bioacoustics: {
-            ...requestBioState,
-            ...bioacousticsOptions,
-        },
-    };
 }
 
 function runBackendSelectionAnalysis(requestPayload) {
@@ -588,7 +672,7 @@ ipcMain.on('backend-call-monitor:ready', (event) => {
 
 ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
     const analysisType = normalizeBackendAnalysisType(runOptions.analysisType || DEFAULT_BACKEND_ANALYSIS_TYPE);
-    const requestState = mergeRequestState(backendCallStateCache, runOptions);
+    const requestState = normalizeBackendRequestState(backendCallStateCache, runOptions);
     const requestAsset = requestState.asset;
     const requestSelection = requestState.selection;
     const requestBioacoustics = requestState.bioacoustics;
@@ -650,23 +734,16 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         }
     }
 
-    const requestPayload = {
-        asset: requestAsset,
-        selection: requestSelection,
-        uiContext: requestState.uiContext || {},
-        bioacoustics: requestBioacoustics,
+    const requestPayload = buildBackendAnalysisRequest(requestState, {
         analysisType,
-        saveOptions: {
-            mode: normalizeBackendSaveMode(analysisType, runOptions.saveMode),
-            label: typeof runOptions.saveLabel === 'string' ? runOptions.saveLabel.trim() : '',
-        },
-        callMeta: {
-            requestId: typeof runOptions.requestId === 'string' && runOptions.requestId.trim() !== ''
-                ? runOptions.requestId.trim()
-                : randomUUID(),
-            requestedAt: new Date().toISOString(),
-        },
-    };
+        saveMode: runOptions.saveMode,
+        saveLabel: runOptions.saveLabel,
+    }, {
+        requestId: typeof runOptions.requestId === 'string' && runOptions.requestId.trim() !== ''
+            ? runOptions.requestId.trim()
+            : randomUUID(),
+        requestedAt: new Date().toISOString(),
+    });
 
     appendBackendLog({
         level: 'info',

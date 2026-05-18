@@ -17,11 +17,18 @@ from wild_audio_worlds.session.command_contracts import (  # noqa: E402
 
 
 def test_parse_backend_analysis_request_json_applies_defaults():
-    parsed = parse_backend_analysis_request_json('{"asset": {"id": "asset-1"}, "saveOptions": {"label": "  Demo  "}}')
+    parsed = parse_backend_analysis_request_json('{"asset": {"id": "asset-1"}, "selection": {"isReady": 1, "timeRangeSec": null}, "saveOptions": {"label": "  Demo  "}}')
 
     assert parsed["analysisType"] == DEFAULT_BACKEND_ANALYSIS_TYPE
     assert parsed["asset"] == {"id": "asset-1"}
-    assert parsed["selection"] == {}
+    assert parsed["selection"] == {
+        "isReady": True,
+        "frameRange": {},
+        "sampleRange": {},
+        "timeRangeSec": {},
+        "frequencyBinRange": {},
+        "amplitudePctRange": {},
+    }
     assert parsed["bioacoustics"] == {}
     assert parsed["uiContext"] == {}
     assert parsed["saveOptions"]["mode"] == DEFAULT_BACKEND_SAVE_MODE

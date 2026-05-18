@@ -47,3 +47,4 @@ Last updated: 2026-05-18
 - 3DAudioGraphs backend runner path and project-root resolution helpers extracted into `packages/wild_audio_worlds/graph/`
 - First shared backend command-contract types extracted into `packages/wild_audio_worlds/session/command_contracts.py`
 - Shared backend analysis-type registry extracted into `packages/wild_audio_worlds/session/analysis_types.json` with Python and Electron loaders
+- First shared selection payload normalizers extracted into `packages/wild_audio_worlds/session/selection_contracts.py` and mirrored by `packages/wild_audio_worlds/session/command_contracts.cjs`

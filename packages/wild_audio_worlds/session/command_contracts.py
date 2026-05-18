@@ -6,6 +6,7 @@ import json
 from typing import Any, Mapping, TypedDict
 
 from .analysis_types import DEFAULT_BACKEND_ANALYSIS_TYPE, normalize_backend_analysis_type
+from .selection_contracts import BackendSelectionContract, normalize_backend_selection_contract
 
 
 DEFAULT_BACKEND_SAVE_MODE = "json"
@@ -26,15 +27,6 @@ class BackendAssetContract(TypedDict, total=False):
     analysisWindowDurationSec: float
     analysisClipDurationSec: float
     analysisFftNfft: int
-
-
-class BackendSelectionContract(TypedDict, total=False):
-    isReady: bool
-    timeRangeSec: dict[str, Any]
-    frequencyBinRange: dict[str, Any]
-    amplitudePctRange: dict[str, Any]
-
-
 class BackendBioacousticsContract(TypedDict, total=False):
     autoDiscover: bool
     workbookPath: str
@@ -95,7 +87,7 @@ def normalize_backend_analysis_request(payload: Mapping[str, Any] | None) -> Bac
     return {
         "analysisType": normalize_backend_analysis_type(payload.get("analysisType")),
         "asset": _mapping_or_empty(payload.get("asset")),
-        "selection": _mapping_or_empty(payload.get("selection")),
+        "selection": normalize_backend_selection_contract(payload.get("selection")),
         "uiContext": _mapping_or_empty(payload.get("uiContext")),
         "bioacoustics": _mapping_or_empty(payload.get("bioacoustics")),
         "saveOptions": {
