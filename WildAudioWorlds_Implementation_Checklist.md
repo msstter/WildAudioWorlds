@@ -21,12 +21,12 @@ Last updated: 2026-05-18
 - [x] Install frontend dependencies for `3DAudioGraphs-main/frontend`
 - [x] Smoke-test standalone AudioOnsetFinder shell startup
 - [x] Smoke-test 3DAudioGraphs backend import and asset-processing path
-- [ ] Begin extracting shared Python code into `packages/wild_audio_worlds/`
+- [x] Begin extracting shared Python code into `packages/wild_audio_worlds/`
 
 ## First Shared-Service Milestones
 
 - [ ] Define the standalone-shell and linked-session attach contract
-- [ ] Add the first shared command-schema contract tests
+- [x] Add the first shared command-schema contract tests
 - [ ] Stand up the local integration service bootstrap path
 - [ ] Introduce DataManager as the single writer for derived artifacts
 - [ ] Introduce AudioManager as the shared session authority
@@ -43,3 +43,7 @@ Last updated: 2026-05-18
 - 3DAudioGraphs frontend build validated successfully with `npm run build`
 - AudioOnsetFinder shell startup validated offscreen through the real `pipeline_gui.main()` path with exit code `0`
 - 3DAudioGraphs backend import runner validated end to end with a generated WAV and verified FFT, terrain envelope, MFCC, copied audio, and manifest outputs
+- First shared-code extraction completed for 3DAudioGraphs asset-store path and manifest helpers into `packages/wild_audio_worlds/data/audio_asset_store.py`
+- 3DAudioGraphs backend runner path and project-root resolution helpers extracted into `packages/wild_audio_worlds/graph/`
+- First shared backend command-contract types extracted into `packages/wild_audio_worlds/session/command_contracts.py`
+- Shared backend analysis-type registry extracted into `packages/wild_audio_worlds/session/analysis_types.json` with Python and Electron loaders

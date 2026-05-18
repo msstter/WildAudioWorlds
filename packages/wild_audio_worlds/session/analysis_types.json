@@ -1,0 +1,49 @@
+{
+  "default": "slice-summary",
+  "actions": {
+    "slice-summary": {
+      "group": "analysis",
+      "runner": "slice_summary",
+      "defaultSaveMode": "json",
+      "allowedSaveModes": ["json", "none"]
+    },
+    "mfcc-profile": {
+      "group": "analysis",
+      "runner": "mfcc_profile",
+      "defaultSaveMode": "json",
+      "allowedSaveModes": ["json", "none"]
+    },
+    "spectral-shape": {
+      "group": "analysis",
+      "runner": "spectral_shape",
+      "defaultSaveMode": "json",
+      "allowedSaveModes": ["json", "none"]
+    },
+    "export-time-slice-audio": {
+      "group": "analysis",
+      "runner": "export_time_slice_audio",
+      "defaultSaveMode": "wav",
+      "allowedSaveModes": ["wav"]
+    },
+    "export-spectral-mask-audio": {
+      "group": "analysis",
+      "runner": "export_spectral_mask_audio",
+      "defaultSaveMode": "wav",
+      "allowedSaveModes": ["wav"]
+    },
+    "bioacoustics-import-workbook": {
+      "group": "bioacoustics",
+      "runner": "bioacoustics_import_workbook",
+      "operation": "import-workbook",
+      "defaultSaveMode": "none",
+      "allowedSaveModes": ["none", "json"]
+    },
+    "bioacoustics-sync-workbook": {
+      "group": "bioacoustics",
+      "runner": "bioacoustics_sync_workbook",
+      "operation": "sync-workbook",
+      "defaultSaveMode": "xlsx",
+      "allowedSaveModes": ["xlsx"]
+    }
+  }
+}

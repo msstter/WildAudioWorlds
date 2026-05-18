@@ -5,6 +5,58 @@ const fs = require('fs');
 const path = require('path');
 
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
+const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
+const SHARED_SESSION_ANALYSIS_TYPES_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'analysis_types.cjs');
+const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
+    ? require(SHARED_GRAPH_PATHS_MODULE)
+    : {
+        resolveGraphProjectRoot: (frontendDir) => path.resolve(frontendDir, '..'),
+        resolveBackendRunnerPath: (frontendDir) => path.join(path.resolve(frontendDir, '..'), 'backend', 'run_selection_analysis.py'),
+        resolveRecordedAudioImportRunnerPath: (frontendDir) => path.join(path.resolve(frontendDir, '..'), 'backend', 'import_recorded_audio.py'),
+    };
+const sessionAnalysisTypes = fs.existsSync(SHARED_SESSION_ANALYSIS_TYPES_MODULE)
+    ? require(SHARED_SESSION_ANALYSIS_TYPES_MODULE)
+    : {
+        DEFAULT_BACKEND_ANALYSIS_TYPE: 'slice-summary',
+        normalizeBackendAnalysisType(value) {
+            const normalized = typeof value === 'string' ? value.trim() : '';
+            return normalized || this.DEFAULT_BACKEND_ANALYSIS_TYPE;
+        },
+        normalizeBackendSaveMode(analysisType, requestedSaveMode) {
+            const normalizedAction = this.normalizeBackendAnalysisType(analysisType);
+            const normalizedSaveMode = typeof requestedSaveMode === 'string' && requestedSaveMode.trim() !== ''
+                ? requestedSaveMode.trim().toLowerCase()
+                : 'json';
+
+            if (normalizedAction === 'export-time-slice-audio' || normalizedAction === 'export-spectral-mask-audio') {
+                return 'wav';
+            }
+            if (normalizedAction === 'bioacoustics-sync-workbook') {
+                return 'xlsx';
+            }
+            if (normalizedAction === 'bioacoustics-import-workbook') {
+                return normalizedSaveMode === 'json' ? 'json' : 'none';
+            }
+            return normalizedSaveMode === 'none' ? 'none' : 'json';
+        },
+        isBioacousticsAnalysisType(analysisType) {
+            return typeof analysisType === 'string' && analysisType.startsWith('bioacoustics-');
+        },
+        isBioacousticsImportAnalysisType(analysisType) {
+            return this.normalizeBackendAnalysisType(analysisType) === 'bioacoustics-import-workbook';
+        },
+        isBioacousticsSyncAnalysisType(analysisType) {
+            return this.normalizeBackendAnalysisType(analysisType) === 'bioacoustics-sync-workbook';
+        },
+    };
+const {
+    DEFAULT_BACKEND_ANALYSIS_TYPE,
+    isBioacousticsAnalysisType,
+    isBioacousticsImportAnalysisType,
+    isBioacousticsSyncAnalysisType,
+    normalizeBackendAnalysisType,
+    normalizeBackendSaveMode,
+} = sessionAnalysisTypes;
 
 let mainWindow;
 let backendMonitorWindow = null;
@@ -18,7 +70,7 @@ const BACKEND_CALL_LOG_LIMIT = 200;
 app.commandLine.appendSwitch('force_high_performance_gpu');
 
 function getProjectRoot() {
-    return path.resolve(__dirname, '..');
+    return graphBackendPaths.resolveGraphProjectRoot(__dirname);
 }
 
 function isDevMode() {
@@ -192,11 +244,11 @@ function resolveBackendPythonCommand() {
 }
 
 function resolveBackendRunnerPath() {
-    return path.join(getProjectRoot(), 'backend', 'run_selection_analysis.py');
+    return graphBackendPaths.resolveBackendRunnerPath(__dirname);
 }
 
 function resolveRecordedAudioImportRunnerPath() {
-    return path.join(getProjectRoot(), 'backend', 'import_recorded_audio.py');
+    return graphBackendPaths.resolveRecordedAudioImportRunnerPath(__dirname);
 }
 
 function sanitizeFileComponent(value, fallback = 'recorded-audio') {
@@ -228,33 +280,6 @@ function toNodeBuffer(value) {
         return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
     }
     return null;
-}
-
-function normalizeBackendSaveMode(analysisType, requestedSaveMode) {
-    const normalizedAction = typeof analysisType === 'string' && analysisType.trim() !== ''
-        ? analysisType.trim()
-        : 'slice-summary';
-    const normalizedSaveMode = typeof requestedSaveMode === 'string' && requestedSaveMode.trim() !== ''
-        ? requestedSaveMode.trim().toLowerCase()
-        : 'json';
-
-    if (normalizedAction === 'export-time-slice-audio' || normalizedAction === 'export-spectral-mask-audio') {
-        return 'wav';
-    }
-
-    if (normalizedAction === 'bioacoustics-sync-workbook') {
-        return 'xlsx';
-    }
-
-    if (normalizedAction === 'bioacoustics-import-workbook') {
-        return normalizedSaveMode === 'json' ? 'json' : 'none';
-    }
-
-    return normalizedSaveMode === 'none' ? 'none' : 'json';
-}
-
-function isBioacousticsAction(analysisType) {
-    return typeof analysisType === 'string' && analysisType.startsWith('bioacoustics-');
 }
 
 function mergeRequestState(baseState, runOptions = {}) {
@@ -562,9 +587,7 @@ ipcMain.on('backend-call-monitor:ready', (event) => {
 });
 
 ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
-    const analysisType = typeof runOptions.analysisType === 'string' && runOptions.analysisType.trim() !== ''
-        ? runOptions.analysisType.trim()
-        : 'slice-summary';
+    const analysisType = normalizeBackendAnalysisType(runOptions.analysisType || DEFAULT_BACKEND_ANALYSIS_TYPE);
     const requestState = mergeRequestState(backendCallStateCache, runOptions);
     const requestAsset = requestState.asset;
     const requestSelection = requestState.selection;
@@ -580,7 +603,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         return failure;
     }
 
-    if (!isBioacousticsAction(analysisType) && !requestSelection?.isReady) {
+    if (!isBioacousticsAnalysisType(analysisType) && !requestSelection?.isReady) {
         const failure = {
             ok: false,
             error: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
@@ -590,7 +613,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         return failure;
     }
 
-    if (analysisType === 'bioacoustics-import-workbook'
+    if (isBioacousticsImportAnalysisType(analysisType)
         && !requestBioacoustics?.workbookPath
         && !requestBioacoustics?.autoDiscover) {
         const failure = {
@@ -602,7 +625,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         return failure;
     }
 
-    if (analysisType === 'bioacoustics-sync-workbook') {
+    if (isBioacousticsSyncAnalysisType(analysisType)) {
         const onsetTimes = Array.isArray(requestBioacoustics?.onsetTimes) ? requestBioacoustics.onsetTimes : [];
         const outputMode = typeof requestBioacoustics?.outputMode === 'string' && requestBioacoustics.outputMode.trim() !== ''
             ? requestBioacoustics.outputMode.trim().toLowerCase()

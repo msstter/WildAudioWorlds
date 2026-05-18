@@ -10,6 +10,16 @@ from uuid import uuid4
 import librosa
 import numpy as np
 
+from shared_graph_paths import resolve_graph_project_root
+from wild_audio_worlds.session.analysis_types import (
+    BACKEND_ANALYSIS_TYPE_CONFIGS,
+    DEFAULT_BACKEND_ANALYSIS_TYPE,
+    normalize_backend_analysis_type,
+)
+from wild_audio_worlds.session.command_contracts import (
+    parse_backend_analysis_request_json,
+)
+
 try:
     from bioacoustics_workbook import load_onsets_for_audio, sync_workbook_onsets
 except ModuleNotFoundError:
@@ -27,7 +37,7 @@ AUTO_DISCOVER_BIO_SEARCH_ROOTS = ("data", "backend/data")
 
 
 def _project_root():
-    return Path(__file__).resolve().parent.parent
+    return resolve_graph_project_root(anchor_file=__file__)
 
 
 def _slugify(value):
@@ -42,13 +52,7 @@ def _slugify(value):
 
 
 def _read_payload():
-    raw = sys.stdin.read()
-    if not raw.strip():
-        raise ValueError("No JSON payload received on stdin.")
-    parsed = json.loads(raw)
-    if not isinstance(parsed, dict):
-        raise ValueError("Selection analysis payload must be a JSON object.")
-    return parsed
+    return parse_backend_analysis_request_json(sys.stdin.read())
 
 
 def _coerce_float(value, fallback=0.0):
@@ -688,18 +692,35 @@ def _run_export_spectral_mask_audio(y, sr, asset_payload, selection_payload):
     }
 
 
-ANALYSIS_RUNNERS = {
-    "slice-summary": _run_slice_summary,
-    "mfcc-profile": _run_mfcc_profile,
-    "spectral-shape": _run_spectral_shape,
-    "export-time-slice-audio": _run_export_time_slice_audio,
-    "export-spectral-mask-audio": _run_export_spectral_mask_audio,
+RUNNER_FUNCTIONS = {
+    "slice_summary": _run_slice_summary,
+    "mfcc_profile": _run_mfcc_profile,
+    "spectral_shape": _run_spectral_shape,
+    "export_time_slice_audio": _run_export_time_slice_audio,
+    "export_spectral_mask_audio": _run_export_spectral_mask_audio,
+    "bioacoustics_import_workbook": _run_bioacoustics_import_workbook,
+    "bioacoustics_sync_workbook": _run_bioacoustics_sync_workbook,
 }
 
-BIOACOUSTICS_RUNNERS = {
-    "bioacoustics-import-workbook": _run_bioacoustics_import_workbook,
-    "bioacoustics-sync-workbook": _run_bioacoustics_sync_workbook,
-}
+
+def _build_runner_registry(group):
+    registry = {}
+    for analysis_type, config in BACKEND_ANALYSIS_TYPE_CONFIGS.items():
+        if config.get("group") != group:
+            continue
+
+        runner_key = str(config.get("runner") or "").strip()
+        if not runner_key:
+            raise KeyError(f"Backend analysis type '{analysis_type}' is missing a runner mapping.")
+        if runner_key not in RUNNER_FUNCTIONS:
+            raise KeyError(f"Backend runner function is not defined for key: {runner_key}")
+
+        registry[analysis_type] = RUNNER_FUNCTIONS[runner_key]
+    return registry
+
+
+ANALYSIS_RUNNERS = _build_runner_registry("analysis")
+BIOACOUSTICS_RUNNERS = _build_runner_registry("bioacoustics")
 
 
 def _write_wav_pcm16(export_path, y, sr):
@@ -770,7 +791,7 @@ def _save_result(payload, save_artifact=None):
 
 def run():
     payload = _read_payload()
-    analysis_type = str(payload.get("analysisType") or "slice-summary").strip()
+    analysis_type = normalize_backend_analysis_type(payload.get("analysisType") or DEFAULT_BACKEND_ANALYSIS_TYPE)
     if analysis_type not in ANALYSIS_RUNNERS and analysis_type not in BIOACOUSTICS_RUNNERS:
         raise ValueError(f"Unsupported analysis type: {analysis_type}")
 
