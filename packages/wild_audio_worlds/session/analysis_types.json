@@ -5,45 +5,80 @@
       "group": "analysis",
       "runner": "slice_summary",
       "defaultSaveMode": "json",
-      "allowedSaveModes": ["json", "none"]
+      "allowedSaveModes": ["json", "none"],
+      "ui": {
+        "label": "Slice Summary",
+        "help": "Runs a concise backend overview on the current SpectroTerrain slice: RMS, spectral centroid, bandwidth, zero crossing rate, onset strength, and energy concentration inside the selected frequency band.",
+        "showBioOutputMode": false
+      }
     },
     "mfcc-profile": {
       "group": "analysis",
       "runner": "mfcc_profile",
       "defaultSaveMode": "json",
-      "allowedSaveModes": ["json", "none"]
+      "allowedSaveModes": ["json", "none"],
+      "ui": {
+        "label": "MFCC Profile",
+        "help": "Computes a 13-coefficient MFCC profile for the current slice and returns per-coefficient mean and standard deviation values.",
+        "showBioOutputMode": false
+      }
     },
     "spectral-shape": {
       "group": "analysis",
       "runner": "spectral_shape",
       "defaultSaveMode": "json",
-      "allowedSaveModes": ["json", "none"]
+      "allowedSaveModes": ["json", "none"],
+      "ui": {
+        "label": "Spectral Shape",
+        "help": "Focuses on broader spectral character for the slice, including rolloff, flatness, and spectral contrast statistics.",
+        "showBioOutputMode": false
+      }
     },
     "export-time-slice-audio": {
       "group": "analysis",
       "runner": "export_time_slice_audio",
       "defaultSaveMode": "wav",
-      "allowedSaveModes": ["wav"]
+      "allowedSaveModes": ["wav"],
+      "ui": {
+        "label": "Export Time Slice Audio",
+        "help": "Exports the selected full-clip time window as a WAV file. This first audio path uses the shared sculpt time range, but it does not yet apply the sculpted frequency or amplitude mask.",
+        "showBioOutputMode": false
+      }
     },
     "export-spectral-mask-audio": {
       "group": "analysis",
       "runner": "export_spectral_mask_audio",
       "defaultSaveMode": "wav",
-      "allowedSaveModes": ["wav"]
+      "allowedSaveModes": ["wav"],
+      "ui": {
+        "label": "Export Sculpted Spectral Mask Audio",
+        "help": "Exports a WAV rebuilt from the selected full-clip time window after masking the STFT by the sculpted frequency and amplitude bounds.",
+        "showBioOutputMode": false
+      }
     },
     "bioacoustics-import-workbook": {
       "group": "bioacoustics",
       "runner": "bioacoustics_import_workbook",
       "operation": "import-workbook",
       "defaultSaveMode": "none",
-      "allowedSaveModes": ["none", "json"]
+      "allowedSaveModes": ["none", "json"],
+      "ui": {
+        "label": "Bioacoustics: Import Workbook Onsets",
+        "help": "Loads onset times from a BioacousticsProject workbook for the currently selected audio file. The path field can point directly to an Excel workbook or to an audio/output folder root, and the handler will resolve the matching AudioData_OnsetFinder workbook from there.",
+        "showBioOutputMode": false
+      }
     },
     "bioacoustics-sync-workbook": {
       "group": "bioacoustics",
       "runner": "bioacoustics_sync_workbook",
       "operation": "sync-workbook",
       "defaultSaveMode": "xlsx",
-      "allowedSaveModes": ["xlsx"]
+      "allowedSaveModes": ["xlsx"],
+      "ui": {
+        "label": "Bioacoustics: Sync Workbook",
+        "help": "Writes the current Timbre onset list into a Bioacoustics-compatible workbook and regenerates the summary plus dyadic sheets. The path field can point to a source workbook or to a folder root whose data subfolder should receive or resolve the workbook.",
+        "showBioOutputMode": true
+      }
     }
   }
 }

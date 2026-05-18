@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const invokeChannels = new Set([
+    'backend-call:get-action-metadata',
     'backend-call:show-open-dialog',
     'recorded-audio:import',
     'backend-call:run',

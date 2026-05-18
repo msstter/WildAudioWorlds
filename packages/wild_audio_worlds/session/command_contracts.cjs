@@ -1,8 +1,13 @@
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
+    getBackendActionMetadataMap,
     normalizeBackendAnalysisType,
     normalizeBackendSaveMode,
 } = require('./analysis_types.cjs');
+const {
+    normalizeBackendSelectionContract,
+    normalizeReadySelectionForRequest,
+} = require('./selection_contracts.cjs');
 
 const DEFAULT_BACKEND_SAVE_MODE = 'json';
 
@@ -10,19 +15,6 @@ function mappingOrEmpty(value) {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? { ...value }
         : {};
-}
-
-function normalizeBackendSelectionContract(selectionPayload) {
-    const selection = mappingOrEmpty(selectionPayload);
-    return {
-        ...selection,
-        isReady: !!selection.isReady,
-        frameRange: mappingOrEmpty(selection.frameRange),
-        sampleRange: mappingOrEmpty(selection.sampleRange),
-        timeRangeSec: mappingOrEmpty(selection.timeRangeSec),
-        frequencyBinRange: mappingOrEmpty(selection.frequencyBinRange),
-        amplitudePctRange: mappingOrEmpty(selection.amplitudePctRange),
-    };
 }
 
 function normalizeBackendRequestState(baseState, runOptions = {}) {
@@ -56,11 +48,15 @@ function normalizeBackendAnalysisRequest(payload) {
     const saveOptions = mappingOrEmpty(normalizedPayload.saveOptions);
     const callMeta = mappingOrEmpty(normalizedPayload.callMeta);
     const analysisType = normalizeBackendAnalysisType(normalizedPayload.analysisType);
+    const asset = mappingOrEmpty(normalizedPayload.asset);
+    const selection = normalizeBackendSelectionContract(normalizedPayload.selection);
 
     return {
         analysisType,
-        asset: mappingOrEmpty(normalizedPayload.asset),
-        selection: normalizeBackendSelectionContract(normalizedPayload.selection),
+        asset,
+        selection: selection.isReady
+            ? normalizeReadySelectionForRequest(asset, selection)
+            : selection,
         uiContext: mappingOrEmpty(normalizedPayload.uiContext),
         bioacoustics: mappingOrEmpty(normalizedPayload.bioacoustics),
         saveOptions: {
@@ -96,6 +92,7 @@ module.exports = {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
     DEFAULT_BACKEND_SAVE_MODE,
     buildBackendAnalysisRequest,
+    getBackendActionMetadataMap,
     normalizeBackendAnalysisRequest,
     normalizeBackendAnalysisType,
     normalizeBackendRequestState,

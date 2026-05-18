@@ -152,10 +152,71 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                 },
             });
         },
+        getBackendActionMetadataMap() {
+            return {
+                'slice-summary': {
+                    label: 'Slice Summary',
+                    help: 'Runs a concise backend overview on the current SpectroTerrain slice: RMS, spectral centroid, bandwidth, zero crossing rate, onset strength, and energy concentration inside the selected frequency band.',
+                    saveModes: ['json', 'none'],
+                    defaultSaveMode: 'json',
+                    isBioacoustics: false,
+                    showBioOutputMode: false,
+                },
+                'mfcc-profile': {
+                    label: 'MFCC Profile',
+                    help: 'Computes a 13-coefficient MFCC profile for the current slice and returns per-coefficient mean and standard deviation values.',
+                    saveModes: ['json', 'none'],
+                    defaultSaveMode: 'json',
+                    isBioacoustics: false,
+                    showBioOutputMode: false,
+                },
+                'spectral-shape': {
+                    label: 'Spectral Shape',
+                    help: 'Focuses on broader spectral character for the slice, including rolloff, flatness, and spectral contrast statistics.',
+                    saveModes: ['json', 'none'],
+                    defaultSaveMode: 'json',
+                    isBioacoustics: false,
+                    showBioOutputMode: false,
+                },
+                'export-time-slice-audio': {
+                    label: 'Export Time Slice Audio',
+                    help: 'Exports the selected full-clip time window as a WAV file. This first audio path uses the shared sculpt time range, but it does not yet apply the sculpted frequency or amplitude mask.',
+                    saveModes: ['wav'],
+                    defaultSaveMode: 'wav',
+                    isBioacoustics: false,
+                    showBioOutputMode: false,
+                },
+                'export-spectral-mask-audio': {
+                    label: 'Export Sculpted Spectral Mask Audio',
+                    help: 'Exports a WAV rebuilt from the selected full-clip time window after masking the STFT by the sculpted frequency and amplitude bounds.',
+                    saveModes: ['wav'],
+                    defaultSaveMode: 'wav',
+                    isBioacoustics: false,
+                    showBioOutputMode: false,
+                },
+                'bioacoustics-import-workbook': {
+                    label: 'Bioacoustics: Import Workbook Onsets',
+                    help: 'Loads onset times from a BioacousticsProject workbook for the currently selected audio file. The path field can point directly to an Excel workbook or to an audio/output folder root, and the handler will resolve the matching AudioData_OnsetFinder workbook from there.',
+                    saveModes: ['none', 'json'],
+                    defaultSaveMode: 'none',
+                    isBioacoustics: true,
+                    showBioOutputMode: false,
+                },
+                'bioacoustics-sync-workbook': {
+                    label: 'Bioacoustics: Sync Workbook',
+                    help: 'Writes the current Timbre onset list into a Bioacoustics-compatible workbook and regenerates the summary plus dyadic sheets. The path field can point to a source workbook or to a folder root whose data subfolder should receive or resolve the workbook.',
+                    saveModes: ['xlsx'],
+                    defaultSaveMode: 'xlsx',
+                    isBioacoustics: true,
+                    showBioOutputMode: true,
+                },
+            };
+        },
     };
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
     buildBackendAnalysisRequest,
+    getBackendActionMetadataMap,
     isBioacousticsAnalysisType,
     isBioacousticsImportAnalysisType,
     isBioacousticsSyncAnalysisType,
@@ -563,6 +624,14 @@ ipcMain.handle('backend-call-monitor:open', async () => {
     return { ok: true };
 });
 
+ipcMain.handle('backend-call:get-action-metadata', async () => {
+    return {
+        ok: true,
+        defaultActionType: DEFAULT_BACKEND_ANALYSIS_TYPE,
+        actions: getBackendActionMetadataMap(),
+    };
+});
+
 ipcMain.handle('backend-call:show-open-dialog', async (event, dialogOptions = {}) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow || undefined;
     const requestedProperties = Array.isArray(dialogOptions?.properties) && dialogOptions.properties.length > 0
@@ -734,16 +803,27 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         }
     }
 
-    const requestPayload = buildBackendAnalysisRequest(requestState, {
-        analysisType,
-        saveMode: runOptions.saveMode,
-        saveLabel: runOptions.saveLabel,
-    }, {
-        requestId: typeof runOptions.requestId === 'string' && runOptions.requestId.trim() !== ''
-            ? runOptions.requestId.trim()
-            : randomUUID(),
-        requestedAt: new Date().toISOString(),
-    });
+    let requestPayload;
+    try {
+        requestPayload = buildBackendAnalysisRequest(requestState, {
+            analysisType,
+            saveMode: runOptions.saveMode,
+            saveLabel: runOptions.saveLabel,
+        }, {
+            requestId: typeof runOptions.requestId === 'string' && runOptions.requestId.trim() !== ''
+                ? runOptions.requestId.trim()
+                : randomUUID(),
+            requestedAt: new Date().toISOString(),
+        });
+    } catch (error) {
+        const failure = {
+            ok: false,
+            error: error?.message || 'Failed to prepare the backend request payload.',
+        };
+        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
+        sendToMainWindow('backend-call:completed', failure);
+        return failure;
+    }
 
     appendBackendLog({
         level: 'info',

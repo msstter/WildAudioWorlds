@@ -1,48 +1,6 @@
 const ipcRenderer = globalThis.desktopBridge?.backend ?? null;
 const BIO_HANDLER_PREFERENCES_KEY = '3daudio_backend_monitor_bio_handler_v1';
 
-const BACKEND_ACTIONS = {
-    'slice-summary': {
-        help: 'Runs a concise backend overview on the current SpectroTerrain slice: RMS, spectral centroid, bandwidth, zero crossing rate, onset strength, and energy concentration inside the selected frequency band.',
-        saveModes: ['json', 'none'],
-        defaultSaveMode: 'json',
-    },
-    'mfcc-profile': {
-        help: 'Computes a 13-coefficient MFCC profile for the current slice and returns per-coefficient mean and standard deviation values.',
-        saveModes: ['json', 'none'],
-        defaultSaveMode: 'json',
-    },
-    'spectral-shape': {
-        help: 'Focuses on broader spectral character for the slice, including rolloff, flatness, and spectral contrast statistics.',
-        saveModes: ['json', 'none'],
-        defaultSaveMode: 'json',
-    },
-    'export-time-slice-audio': {
-        help: 'Exports the selected full-clip time window as a WAV file. This first audio path uses the shared sculpt time range, but it does not yet apply the sculpted frequency or amplitude mask.',
-        saveModes: ['wav'],
-        defaultSaveMode: 'wav',
-    },
-    'export-spectral-mask-audio': {
-        help: 'Exports a WAV rebuilt from the selected full-clip time window after masking the STFT by the sculpted frequency and amplitude bounds.',
-        saveModes: ['wav'],
-        defaultSaveMode: 'wav',
-    },
-    'bioacoustics-import-workbook': {
-        help: 'Loads onset times from a BioacousticsProject workbook for the currently selected audio file. The path field can point directly to an Excel workbook or to an audio/output folder root, and the handler will resolve the matching AudioData_OnsetFinder workbook from there.',
-        saveModes: ['none', 'json'],
-        defaultSaveMode: 'none',
-        isBioacoustics: true,
-        showBioOutputMode: false,
-    },
-    'bioacoustics-sync-workbook': {
-        help: 'Writes the current Timbre onset list into a Bioacoustics-compatible workbook and regenerates the summary plus dyadic sheets. The path field can point to a source workbook or to a folder root whose data subfolder should receive or resolve the workbook.',
-        saveModes: ['xlsx'],
-        defaultSaveMode: 'xlsx',
-        isBioacoustics: true,
-        showBioOutputMode: true,
-    },
-};
-
 const SAVE_MODE_LABELS = {
     json: 'Save JSON to data/exports/backend_calls',
     wav: 'Save WAV to data/exports/backend_calls',
@@ -87,6 +45,8 @@ const elements = {
 };
 
 const viewState = {
+    actionCatalog: {},
+    defaultActionType: '',
     currentState: null,
     logs: [],
     latestResult: null,
@@ -123,7 +83,29 @@ elements.bioOutputMode.value = typeof bioHandlerPreferences.outputMode === 'stri
     ? bioHandlerPreferences.outputMode
     : 'duplicate';
 
-const getCurrentActionConfig = () => BACKEND_ACTIONS[elements.analysisType.value] || BACKEND_ACTIONS['slice-summary'];
+const getActionCatalog = () => viewState.actionCatalog && typeof viewState.actionCatalog === 'object'
+    ? viewState.actionCatalog
+    : {};
+
+const getOrderedActionEntries = () => Object.entries(getActionCatalog());
+
+const getCurrentActionType = () => {
+    const selectedType = elements.analysisType.value;
+    if (selectedType && getActionCatalog()[selectedType]) {
+        return selectedType;
+    }
+
+    if (viewState.defaultActionType && getActionCatalog()[viewState.defaultActionType]) {
+        return viewState.defaultActionType;
+    }
+
+    return getOrderedActionEntries()[0]?.[0] || '';
+};
+
+const getCurrentActionConfig = () => {
+    const actionType = getCurrentActionType();
+    return actionType ? getActionCatalog()[actionType] || null : null;
+};
 const getCurrentBioState = () => viewState.currentState?.bioacoustics || null;
 
 const getBioacousticsOptions = () => ({
@@ -131,8 +113,46 @@ const getBioacousticsOptions = () => ({
     outputMode: elements.bioOutputMode.value,
 });
 
+const syncActionOptions = () => {
+    const actionEntries = getOrderedActionEntries();
+    const previousValue = elements.analysisType.value;
+
+    elements.analysisType.replaceChildren();
+    if (actionEntries.length === 0) {
+        const option = document.createElement('option');
+        option.value = '';
+        option.textContent = ipcRenderer
+            ? 'Loading backend actions...'
+            : 'Open through the desktop app';
+        elements.analysisType.appendChild(option);
+        elements.analysisType.value = '';
+        elements.analysisType.disabled = true;
+        return;
+    }
+
+    for (const [analysisType, config] of actionEntries) {
+        const option = document.createElement('option');
+        option.value = analysisType;
+        option.textContent = config?.label || analysisType;
+        elements.analysisType.appendChild(option);
+    }
+
+    const nextValue = getActionCatalog()[previousValue]
+        ? previousValue
+        : (viewState.defaultActionType && getActionCatalog()[viewState.defaultActionType]
+            ? viewState.defaultActionType
+            : actionEntries[0][0]);
+    elements.analysisType.value = nextValue;
+    elements.analysisType.disabled = false;
+};
+
 const syncSaveModeOptions = () => {
     const actionConfig = getCurrentActionConfig();
+    if (!actionConfig) {
+        elements.saveMode.disabled = true;
+        return;
+    }
+
     const allowedSaveModes = Array.isArray(actionConfig.saveModes) && actionConfig.saveModes.length > 0
         ? actionConfig.saveModes
         : ['json', 'none'];
@@ -149,6 +169,7 @@ const syncSaveModeOptions = () => {
     elements.saveMode.value = allowedSaveModes.includes(previousValue)
         ? previousValue
         : (actionConfig.defaultSaveMode || allowedSaveModes[0]);
+    elements.saveMode.disabled = false;
     elements.saveLabel.placeholder = elements.saveMode.value === 'wav'
         ? 'Optional export label'
         : elements.saveMode.value === 'xlsx'
@@ -182,7 +203,7 @@ const formatPctRange = (range) => {
 };
 
 const buildRequestPreview = () => ({
-    analysisType: elements.analysisType.value,
+    analysisType: getCurrentActionType(),
     saveOptions: {
         mode: elements.saveMode.value,
         label: elements.saveLabel.value.trim(),
@@ -202,6 +223,7 @@ const isActionReady = () => {
     if (!ipcRenderer || viewState.isRunning) return false;
 
     const actionConfig = getCurrentActionConfig();
+    if (!actionConfig) return false;
     if (!actionConfig.isBioacoustics) {
         return !!viewState.currentState?.selection?.isReady;
     }
@@ -290,8 +312,11 @@ const renderLogs = () => {
 };
 
 const renderAll = () => {
+    syncActionOptions();
     syncSaveModeOptions();
-    elements.analysisHelp.textContent = getCurrentActionConfig().help || 'No description available.';
+    elements.analysisHelp.textContent = getCurrentActionConfig()?.help || (ipcRenderer
+        ? 'Loading backend action metadata...'
+        : 'Open this page through the desktop app to load backend actions.');
     elements.saveLabel.disabled = elements.saveMode.value === 'none';
     if (elements.saveLabel.disabled) {
         elements.saveLabel.value = '';
@@ -302,7 +327,7 @@ const renderAll = () => {
         : 'Electron bridge unavailable. Open this page through the desktop app to run backend calls.';
 
     const selection = viewState.currentState?.selection || null;
-    elements.selectionStatus.textContent = getCurrentActionConfig().isBioacoustics
+    elements.selectionStatus.textContent = getCurrentActionConfig()?.isBioacoustics
         ? (getCurrentBioState()?.statusMessage || 'Waiting for a Bioacoustics handler snapshot.')
         : (selection?.statusMessage || 'Waiting for a selection snapshot.');
     renderBioHandler();
@@ -367,7 +392,7 @@ elements.runCallBtn.addEventListener('click', async () => {
 
     try {
         const response = await ipcRenderer.invoke('backend-call:run', {
-            analysisType: elements.analysisType.value,
+            analysisType: getCurrentActionType(),
             saveMode: elements.saveMode.value,
             saveLabel: elements.saveLabel.value.trim(),
             bioacousticsOptions: getCurrentActionConfig().isBioacoustics
@@ -385,6 +410,30 @@ elements.runCallBtn.addEventListener('click', async () => {
         renderAll();
     }
 });
+
+const loadActionMetadata = async () => {
+    if (!ipcRenderer) {
+        viewState.actionCatalog = {};
+        viewState.defaultActionType = '';
+        renderAll();
+        return;
+    }
+
+    try {
+        const response = await ipcRenderer.invoke('backend-call:get-action-metadata');
+        viewState.actionCatalog = response?.actions && typeof response.actions === 'object'
+            ? response.actions
+            : {};
+        viewState.defaultActionType = typeof response?.defaultActionType === 'string'
+            ? response.defaultActionType
+            : '';
+    } catch (_error) {
+        viewState.actionCatalog = {};
+        viewState.defaultActionType = '';
+    }
+
+    renderAll();
+};
 
 if (ipcRenderer) {
     ipcRenderer.on('backend-call-monitor:state', (_event, nextState) => {
@@ -425,6 +474,7 @@ if (ipcRenderer) {
     });
 
     ipcRenderer.send('backend-call-monitor:ready');
+    void loadActionMetadata();
 }
 
 renderAll();

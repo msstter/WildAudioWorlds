@@ -7,12 +7,19 @@ from pathlib import Path
 from typing import Any, TypedDict
 
 
+class BackendActionUiConfig(TypedDict, total=False):
+    label: str
+    help: str
+    showBioOutputMode: bool
+
+
 class BackendAnalysisTypeConfig(TypedDict, total=False):
     group: str
     runner: str
     operation: str
     defaultSaveMode: str
     allowedSaveModes: list[str]
+    ui: BackendActionUiConfig
 
 
 def _load_analysis_type_registry() -> dict[str, Any]:

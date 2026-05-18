@@ -42,9 +42,12 @@ def test_analysis_type_helpers_classify_bioacoustics_actions():
 def test_analysis_type_helpers_use_shared_default_and_configs():
     assert DEFAULT_BACKEND_ANALYSIS_TYPE == "slice-summary"
     assert normalize_backend_analysis_type("  ") == DEFAULT_BACKEND_ANALYSIS_TYPE
-    assert get_backend_analysis_type_config("export-time-slice-audio") == {
-        "group": "analysis",
-        "runner": "export_time_slice_audio",
-        "defaultSaveMode": "wav",
-        "allowedSaveModes": ["wav"],
-    }
+    config = get_backend_analysis_type_config("export-time-slice-audio")
+
+    assert config is not None
+    assert config["group"] == "analysis"
+    assert config["runner"] == "export_time_slice_audio"
+    assert config["defaultSaveMode"] == "wav"
+    assert config["allowedSaveModes"] == ["wav"]
+    assert config["ui"]["label"] == "Export Time Slice Audio"
+    assert config["ui"]["showBioOutputMode"] is False
