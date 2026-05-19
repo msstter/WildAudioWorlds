@@ -10,9 +10,8 @@ from shared_graph_paths import resolve_graph_project_root
 from wild_audio_worlds.data.audio_asset_store import (
     build_project_paths as _shared_build_project_paths,
     load_manifest_entries as _shared_load_manifest_entries,
-    save_manifest_entries as _shared_save_manifest_entries,
-    upsert_manifest_entry as _shared_upsert_manifest_entry,
 )
+from wild_audio_worlds.data.data_manager import DataManager
 
 
 DEFAULT_TERRAIN_ENVELOPE_VERSION = 2
@@ -31,17 +30,6 @@ TIMING_COLUMN_NAMES = (
     "Sample_Center",
     "Sample_End",
 )
-
-
-def _save_csv(export_path, export_matrix, header):
-    os.makedirs(os.path.dirname(export_path), exist_ok=True)
-    np.savetxt(export_path, export_matrix, delimiter=",", header=header, comments="")
-
-
-def _save_json(export_path, payload):
-    os.makedirs(os.path.dirname(export_path), exist_ok=True)
-    with open(export_path, "w", encoding="utf-8") as json_file:
-        json.dump(payload, json_file, indent=2)
 
 
 def _build_timing_export_matrix(frame_metadata):
@@ -85,29 +73,11 @@ def _build_analysis_manifest_fields(frame_metadata):
     }
 
 
-def _slugify(value):
-    slug = []
-    for char in value.lower():
-        if char.isalnum():
-            slug.append(char)
-        else:
-            slug.append("-")
-    cleaned = "".join(slug).strip("-")
-    while "--" in cleaned:
-        cleaned = cleaned.replace("--", "-")
-    return cleaned or "audio"
-
-
 def _audio_display_name(path_obj, duplicate_count):
     stem = path_obj.stem
     if duplicate_count > 1:
         return f"{stem} ({path_obj.suffix.lstrip('.')})"
     return stem
-
-
-def _copy_file(src_path, dst_path):
-    os.makedirs(os.path.dirname(dst_path), exist_ok=True)
-    shutil.copy2(src_path, dst_path)
 
 
 def _resample_fft_frame(frame_row, target_bin_count):
@@ -231,26 +201,35 @@ def build_project_paths(project_root=None):
     return _shared_build_project_paths(resolved_project_root)
 
 
+def _build_data_manager(project_root=None):
+    resolved_project_root = resolve_graph_project_root(project_root, anchor_file=__file__)
+    return DataManager(resolved_project_root)
+
+
+def _resolve_project_root_from_manifest_path(manifest_path):
+    return DataManager.resolve_project_root_from_manifest_path(manifest_path)
+
+
 def load_manifest_entries(manifest_path):
-    return _shared_load_manifest_entries(manifest_path)
+    project_root = _resolve_project_root_from_manifest_path(manifest_path)
+    return _build_data_manager(project_root).load_manifest_entries()
 
 
 def save_manifest_entries(manifest_path, manifest_entries):
-    _shared_save_manifest_entries(manifest_path, manifest_entries)
+    project_root = _resolve_project_root_from_manifest_path(manifest_path)
+    _build_data_manager(project_root).save_manifest_entries(manifest_entries)
 
 
 def upsert_manifest_entry(manifest_path, manifest_entry):
-    return _shared_upsert_manifest_entry(manifest_path, manifest_entry)
+    project_root = _resolve_project_root_from_manifest_path(manifest_path)
+    return _build_data_manager(project_root).upsert_manifest_entry(manifest_entry).get("assets", [])
 
 
 def process_audio_file(audio_file, include_mfcc=True, display_name=None, project_root=None, logger=print, audio_proc=None, dim_reducer=None):
     audio_path = Path(audio_file).resolve()
-    paths = build_project_paths(project_root)
+    data_manager = _build_data_manager(project_root)
     log = logger if callable(logger) else (lambda *_args, **_kwargs: None)
     display_name = str(display_name or "").strip() or _audio_display_name(audio_path, 1)
-    asset_key = _slugify(audio_path.stem + audio_path.suffix)
-    asset_public_dir = os.path.join(paths["public_assets_dir"], asset_key)
-    asset_export_dir = os.path.join(paths["exports_dir"], asset_key)
     audio_proc = audio_proc or AudioProcessor()
 
     log(f"Processing {audio_path.name}...")
@@ -277,47 +256,30 @@ def process_audio_file(audio_file, include_mfcc=True, display_name=None, project
             *TIMING_COLUMN_NAMES,
         ))
         mfcc_csv_name = f"{audio_path.stem}_MFCC.csv"
-        mfcc_export_path = os.path.join(asset_public_dir, mfcc_csv_name)
-
-        log(f"Saving coordinates to {mfcc_export_path}...")
-        _save_csv(mfcc_export_path, export_matrix, dynamic_labels)
     else:
         log("Skipping MFCC / TimbreCube export for this asset.")
+        export_matrix = None
+        dynamic_labels = ""
+        mfcc_csv_name = None
 
     fft_header = ",".join(f"FFT_Bin_{i}" for i in range(fft_bins.shape[1]))
     terrain_envelope = _build_terrain_envelope_helper(fft_bins)
-
-    audio_copy_path = os.path.join(asset_public_dir, audio_path.name)
     fft_csv_name = f"{audio_path.stem}_FFTs.csv"
     terrain_envelope_name = f"{audio_path.stem}_TerrainEnvelope.json"
-    fft_export_path = os.path.join(asset_public_dir, fft_csv_name)
-    terrain_envelope_path = os.path.join(asset_public_dir, terrain_envelope_name)
 
-    log(f"Saving FFT bins to {fft_export_path}...")
-    _save_csv(fft_export_path, fft_bins, fft_header)
-
-    log(f"Saving terrain envelope helper to {terrain_envelope_path}...")
-    _save_json(terrain_envelope_path, terrain_envelope)
-
-    log(f"Copying audio to {audio_copy_path}...")
-    _copy_file(str(audio_path), audio_copy_path)
-
-    os.makedirs(asset_export_dir, exist_ok=True)
-    if include_mfcc and mfcc_csv_name:
-        _save_csv(os.path.join(asset_export_dir, mfcc_csv_name), export_matrix, dynamic_labels)
-    _save_csv(os.path.join(asset_export_dir, fft_csv_name), fft_bins, fft_header)
-    _save_json(os.path.join(asset_export_dir, terrain_envelope_name), terrain_envelope)
-
-    return {
-        "id": asset_key,
-        "label": display_name,
-        "audioUrl": f"./audio_assets/{asset_key}/{audio_path.name}",
-        "mfccCsvUrl": f"./audio_assets/{asset_key}/{mfcc_csv_name}" if mfcc_csv_name else None,
-        "fftCsvUrl": f"./audio_assets/{asset_key}/{fft_csv_name}",
-        "terrainEnvelopeUrl": f"./audio_assets/{asset_key}/{terrain_envelope_name}",
-        "hasMfccData": bool(mfcc_csv_name),
-        **_build_analysis_manifest_fields(frame_metadata),
-    }
+    return data_manager.publish_graph_asset_artifacts(
+        source_audio_path=audio_path,
+        display_name=display_name,
+        fft_export_matrix=fft_bins,
+        fft_header=fft_header,
+        fft_file_name=fft_csv_name,
+        terrain_envelope=terrain_envelope,
+        terrain_file_name=terrain_envelope_name,
+        mfcc_export_matrix=export_matrix,
+        mfcc_header=dynamic_labels,
+        mfcc_file_name=mfcc_csv_name,
+        manifest_fields=_build_analysis_manifest_fields(frame_metadata),
+    )
 
 def process_offline_audio():
     # 1. Define paths (relative to this script's location)

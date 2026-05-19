@@ -41,17 +41,15 @@ def load_manifest_entries(manifest_path: str | Path) -> list[dict]:
 
 
 def save_manifest_entries(manifest_path: str | Path, manifest_entries: list[dict]) -> None:
-    manifest_path_str = str(manifest_path)
-    os.makedirs(os.path.dirname(manifest_path_str), exist_ok=True)
-    with open(manifest_path_str, "w", encoding="utf-8") as manifest_file:
-        json.dump({"assets": manifest_entries}, manifest_file, indent=2)
+    from .data_manager import DataManager
+
+    project_root = DataManager.resolve_project_root_from_manifest_path(manifest_path)
+    DataManager(project_root).save_manifest_entries(manifest_entries)
 
 
 def upsert_manifest_entry(manifest_path: str | Path, manifest_entry: dict) -> list[dict]:
-    manifest_entries = [
-        entry for entry in load_manifest_entries(manifest_path)
-        if str(entry.get("id") or "").strip() != str(manifest_entry.get("id") or "").strip()
-    ]
-    manifest_entries.append(manifest_entry)
-    save_manifest_entries(manifest_path, manifest_entries)
-    return manifest_entries
+    from .data_manager import DataManager
+
+    project_root = DataManager.resolve_project_root_from_manifest_path(manifest_path)
+    payload = DataManager(project_root).upsert_manifest_entry(manifest_entry)
+    return payload.get("assets", [])

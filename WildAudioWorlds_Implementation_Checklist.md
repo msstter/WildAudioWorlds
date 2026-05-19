@@ -61,13 +61,21 @@ Last updated: 2026-05-19
 - [x] Validate the first Electron-to-AudioOnsetFinder shared-session shell-edge path with focused Python/CJS tests, Electron syntax checks, and a frontend production build
 - [x] Validate the reverse AudioOnsetFinder-to-Electron shared-session shell-edge path with focused Python contract tests plus Electron CJS smoke and syntax checks
 - [x] Validate `session/detach` plus linked-session launch-failure, attach-failure, and session-reuse behavior with focused Python contract tests
+- [x] Validate the first DataManager extraction around graph-asset publication, manifest ownership, compatibility helper delegation, and stale manifest-write rejection with focused Python contract tests
 
 ## Immediate Next
 
 - [x] Extend the reverse shell edge so AudioOnsetFinder can launch the Electron companion into the same shared session
 - [x] Extend the thin bootstrap from explicit attach/open flows into `session/detach`
 - [x] Add linked-session acceptance coverage for shell-edge launch failures, companion attach failures, and session reuse
-- [ ] Start the first DataManager extraction around mutable asset publication, manifest ownership, and revision-safe writes
+- [x] Start the first DataManager extraction around mutable asset publication, manifest ownership, and revision-safe writes
+
+## Newly Completed DataManager Slice
+
+- [x] Add a shared Python `DataManager` in `packages/wild_audio_worlds/data/` so graph-asset publication and mutable asset-manifest writes move behind one shared owner
+- [x] Route `3DAudioGraphs-main/backend/main.py` graph asset publication through DataManager while preserving the renderer-facing `audio_assets_manifest.json` contract
+- [x] Publish graph assets into per-asset revision directories and add manifest-level revision metadata so new derived revisions do not overwrite prior artifact paths in place
+- [x] Route the legacy shared `audio_asset_store` manifest write helpers through DataManager so compatibility callers still land on the same single-writer path
 
 ## Newly Completed Step 5 Prep
 
@@ -116,5 +124,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, and focused linked-session acceptance coverage around failure and reuse behavior
-- The highest-leverage next move is to push manifest and mutable-asset ownership toward DataManager instead of adding more shell-local write paths
+- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, focused linked-session acceptance coverage, and the first DataManager slice for graph-asset publication
+- The highest-leverage next move is to keep extending DataManager across the remaining direct writer paths, especially backend-call/export publication and broader path authority

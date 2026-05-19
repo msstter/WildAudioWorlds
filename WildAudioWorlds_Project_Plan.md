@@ -33,8 +33,9 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - The reverse shell edge now also exists from AudioOnsetFinder into Electron: the PyQt main window requests `shell/open_companion`, launches `3DAudioGraphs-main/frontend` with shared attach args, and Electron startup joins the shared session through `session/attach` before the BrowserWindow shows.
 - The thin bootstrap now also accepts explicit `session/detach`, and the shared manifest helper can remove peers and downgrade linked sessions back to standalone without losing the session identity or host-shell context.
 - Focused acceptance coverage now also exercises shell-edge launch failure, companion attach failure, `session/detach`, and linked-session reuse/re-attach behavior using narrow Python contract tests.
-- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open/detach command handlers, bidirectional shell edges, and the first failure/reuse checks now exist, but DataManager and AudioManager are still not implemented.
-- The most important next move is to move manifest and mutable-asset ownership toward DataManager.
+- A first DataManager slice now exists in the shared `data/` package: graph-asset publication, asset-manifest ownership, manifest revision metadata, compatibility helper delegation, and per-asset revision directories are now routed through a shared Python DataManager instead of shell-local file writes.
+- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open/detach command handlers, bidirectional shell edges, the first failure/reuse checks, and the first DataManager slice now exist, but full DataManager path authority and AudioManager are still not implemented.
+- The most important next move is to keep extending DataManager to the remaining direct writer paths before starting AudioManager session authority.
 
 ## 2. Current Baseline
 
@@ -407,13 +408,19 @@ Exit criteria: either shell can start alone, and one shell can launch the other 
 
 Exit criteria: both shells can issue backend commands during one app session without repeatedly booting Python, and a linked session can support both shells at once.
 
-### Step 7. Introduce DataManager as the only filesystem authority [Not Started]
+### Step 7. Introduce DataManager as the only filesystem authority [In Progress]
 
 - Implement DataManager in the Python service.
 - Move all path resolution, manifest generation, revision tracking, and artifact publication into DataManager.
 - Redirect current direct writes to `frontend/public/audio_assets/` into the new managed data roots, keeping temporary compatibility links only if needed.
 - Enforce the separation between source files, downloaded model inputs, derived onset outputs, derived graph outputs, and exports.
 - Add revision locks or leases plus atomic publish rules before connected-shell workflows are enabled broadly.
+
+Current slice status:
+
+- A first shared DataManager now owns graph-asset manifest writes plus graph-asset publication from `3DAudioGraphs-main/backend/main.py`.
+- The first extraction preserves the current renderer-facing `audio_assets_manifest.json` contract while publishing new asset revisions into immutable per-revision directories.
+- Remaining direct writer paths, including broader export publication and non-graph derived artifacts, still need to move behind DataManager before this step is complete.
 
 Exit criteria: no analysis module writes paths directly outside DataManager-owned roots.
 
