@@ -60,12 +60,13 @@ Last updated: 2026-05-19
 - [x] Remove remaining recorded-audio failure wording from `frontend/main.cjs` in favor of shared session metadata
 - [x] Validate the first Electron-to-AudioOnsetFinder shared-session shell-edge path with focused Python/CJS tests, Electron syntax checks, and a frontend production build
 - [x] Validate the reverse AudioOnsetFinder-to-Electron shared-session shell-edge path with focused Python contract tests plus Electron CJS smoke and syntax checks
+- [x] Validate `session/detach` plus linked-session launch-failure, attach-failure, and session-reuse behavior with focused Python contract tests
 
 ## Immediate Next
 
 - [x] Extend the reverse shell edge so AudioOnsetFinder can launch the Electron companion into the same shared session
-- [ ] Extend the thin bootstrap from explicit attach/open flows into `session/detach`
-- [ ] Add linked-session acceptance coverage for shell-edge launch failures, companion attach failures, and session reuse
+- [x] Extend the thin bootstrap from explicit attach/open flows into `session/detach`
+- [x] Add linked-session acceptance coverage for shell-edge launch failures, companion attach failures, and session reuse
 - [ ] Start the first DataManager extraction around mutable asset publication, manifest ownership, and revision-safe writes
 
 ## Newly Completed Step 5 Prep
@@ -101,6 +102,12 @@ Last updated: 2026-05-19
 - [x] Wire Electron startup through `session/attach` so an AudioOnsetFinder-launched companion joins the shared session before the BrowserWindow shows
 - [x] Validate the reverse shell-edge path with a focused PyQt contract test plus Electron syntax and shared shell-launch smoke checks
 
+## Newly Completed Detach And Acceptance Slice
+
+- [x] Add thin bootstrap handling for `session/detach` so peer removal lives in the shared local integration service instead of shell-local shutdown code
+- [x] Extend the shared session manifest helper so detach can remove peers, downgrade `linked` sessions back to `standalone`, and preserve host-shell context without forcing detached peers back into the manifest
+- [x] Add focused contract coverage for detach plus shell-edge launch failure, companion attach failure, and linked-session reuse/re-attach behavior
+
 ## Notes
 
 - Root repo path: `/Users/mh295/WildAudioWorlds`
@@ -109,5 +116,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, and Step 5 now includes real shell edges in both directions on top of the attach/open-companion bootstrap commands and linked-session revision checks
-- The highest-leverage next move is to add `session/detach`, then cover launch/attach failure and session-reuse behavior before pushing manifest/write ownership toward DataManager
+- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, and focused linked-session acceptance coverage around failure and reuse behavior
+- The highest-leverage next move is to push manifest and mutable-asset ownership toward DataManager instead of adding more shell-local write paths

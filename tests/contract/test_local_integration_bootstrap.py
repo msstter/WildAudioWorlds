@@ -153,3 +153,92 @@ def test_session_attach_requires_existing_session(tmp_path):
                 },
             },
         })
+
+
+def test_session_detach_downgrades_mode_and_allows_reattach(tmp_path):
+    bootstrap_response = _handle_command(_build_bootstrap_envelope(tmp_path))
+    session_id = bootstrap_response["session"]["sessionId"]
+
+    attach_response = _handle_command({
+        "command": "session/attach",
+        "workspaceRoot": str(tmp_path),
+        "payload": {
+            "sessionId": session_id,
+            "shell": {
+                "shellId": "shell-graph-001",
+                "shellType": "audio-graphs",
+                "startedAt": "2026-05-19T12:00:30+00:00",
+            },
+            "requestedCapabilities": [
+                "transport-read",
+                "transport-write",
+                "asset-read",
+            ],
+        },
+    })
+
+    detach_response = _handle_command({
+        "command": "session/detach",
+        "workspaceRoot": str(tmp_path),
+        "payload": {
+            "sessionId": session_id,
+            "shellId": "shell-graph-001",
+            "reason": "window-closed",
+        },
+    })
+
+    assert detach_response["ok"] is True
+    assert detach_response["sessionId"] == session_id
+    assert detach_response["stateRevision"] == attach_response["stateRevision"] + 1
+    assert detach_response["mode"] == "standalone"
+    assert detach_response["detachedShell"] == {
+        "shellId": "shell-graph-001",
+        "shellType": "audio-graphs",
+        "status": "detached",
+        "reason": "window-closed",
+    }
+    assert {peer["shellId"] for peer in detach_response["manifest"]["peers"]} == {
+        "shell-aof-001",
+    }
+
+    reattach_response = _handle_command({
+        "command": "session/attach",
+        "workspaceRoot": str(tmp_path),
+        "payload": {
+            "sessionId": session_id,
+            "shell": {
+                "shellId": "shell-graph-001",
+                "shellType": "audio-graphs",
+                "startedAt": "2026-05-19T12:01:00+00:00",
+            },
+            "requestedCapabilities": [
+                "transport-read",
+                "transport-write",
+                "asset-read",
+            ],
+            "lastKnownStateRevision": detach_response["stateRevision"],
+        },
+    })
+
+    assert reattach_response["ok"] is True
+    assert reattach_response["sessionId"] == session_id
+    assert reattach_response["stateRevision"] == detach_response["stateRevision"] + 1
+    assert reattach_response["mode"] == "linked"
+    assert {peer["shellId"] for peer in reattach_response["manifest"]["peers"]} == {
+        "shell-aof-001",
+        "shell-graph-001",
+    }
+
+
+def test_session_detach_requires_attached_peer(tmp_path):
+    bootstrap_response = _handle_command(_build_bootstrap_envelope(tmp_path))
+
+    with pytest.raises(ValueError, match="session/detach requested shellId is not attached"):
+        _handle_command({
+            "command": "session/detach",
+            "workspaceRoot": str(tmp_path),
+            "payload": {
+                "sessionId": bootstrap_response["session"]["sessionId"],
+                "shellId": "shell-graph-001",
+            },
+        })

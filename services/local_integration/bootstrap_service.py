@@ -252,6 +252,40 @@ def _build_session_attach_payload(
     }
 
 
+def _build_session_detach_payload(
+    envelope: dict[str, Any],
+    existing_manifest: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    request = _mapping_or_empty(envelope.get("payload"))
+    shell = _mapping_or_empty(request.get("shell"))
+    shell_id = _text_or_empty(request.get("shellId")) or _text_or_empty(shell.get("shellId"))
+    if not shell_id:
+        raise ValueError("session/detach payload is missing shellId.")
+
+    existing_peer = {}
+    for peer in existing_manifest.get("peers", []):
+        if isinstance(peer, dict) and _text_or_empty(peer.get("shellId")) == shell_id:
+            existing_peer = peer
+            break
+
+    if not existing_peer:
+        raise ValueError(f"session/detach requested shellId is not attached: {shell_id}")
+
+    detach_reason = _text_or_empty(request.get("reason")) or "detached"
+    session_payload = {
+        "sessionId": _text_or_empty(existing_manifest.get("sessionId")),
+        "autoAttachHostPeer": False,
+        "detachedPeerIds": [shell_id],
+    }
+
+    return session_payload, {
+        "shellId": shell_id,
+        "shellType": _text_or_empty(existing_peer.get("shellType")) or _text_or_empty(shell.get("shellType")),
+        "status": "detached",
+        "reason": detach_reason,
+    }
+
+
 def _parse_runner_output(stdout: str, *, command: str) -> dict[str, Any]:
     output_lines = stdout.strip().splitlines()
     if not output_lines:
@@ -333,6 +367,22 @@ def _handle_command(envelope: dict[str, Any]) -> dict[str, Any]:
             "session": session_summary,
             **response_fields,
             "attachedShell": attached_shell,
+        }
+
+    if command == "session/detach":
+        workspace_root, existing_manifest, _ = _load_existing_session(envelope, command=command)
+        session_payload, detached_shell = _build_session_detach_payload(envelope, existing_manifest)
+        manifest, manifest_path = _save_session(
+            workspace_root,
+            session_payload,
+            existing_manifest=existing_manifest,
+        )
+        session_summary, response_fields = _build_session_response_fields(manifest, manifest_path)
+        return {
+            "ok": True,
+            "session": session_summary,
+            **response_fields,
+            "detachedShell": detached_shell,
         }
 
     manifest, manifest_path = _ensure_session(envelope)

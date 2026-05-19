@@ -133,3 +133,61 @@ def test_build_session_manifest_promotes_to_linked_when_new_peer_attaches():
         "shell-aof-001",
         "shell-graph-001",
     }
+
+
+def test_build_session_manifest_downgrades_to_standalone_when_peer_detaches():
+    initial_manifest = build_session_manifest({
+        "sessionId": "detach-session-demo",
+        "hostShell": {
+            "shellId": "shell-aof-001",
+            "shellType": "audio-onset-finder",
+        },
+    })
+
+    linked_manifest = build_session_manifest({
+        "sessionId": "detach-session-demo",
+        "peers": [{
+            "shellId": "shell-graph-001",
+            "shellType": "audio-graphs",
+            "status": "attached",
+        }],
+    }, existing_manifest=initial_manifest)
+
+    detached_manifest = build_session_manifest({
+        "sessionId": "detach-session-demo",
+        "autoAttachHostPeer": False,
+        "detachedPeerIds": ["shell-graph-001"],
+    }, existing_manifest=linked_manifest)
+
+    assert detached_manifest["sessionId"] == "detach-session-demo"
+    assert detached_manifest["mode"] == "standalone"
+    assert detached_manifest["stateRevision"] == 3
+    assert detached_manifest["peers"] == [{
+        "shellId": "shell-aof-001",
+        "shellType": "audio-onset-finder",
+        "status": "attached",
+        "attachedAt": initial_manifest["hostShell"]["startedAt"],
+        "lastSeenAt": detached_manifest["updatedAt"],
+    }]
+
+
+def test_build_session_manifest_allows_final_host_detach_without_readding_host_peer():
+    initial_manifest = build_session_manifest({
+        "sessionId": "final-detach-demo",
+        "hostShell": {
+            "shellId": "shell-aof-001",
+            "shellType": "audio-onset-finder",
+        },
+    })
+
+    detached_manifest = build_session_manifest({
+        "sessionId": "final-detach-demo",
+        "autoAttachHostPeer": False,
+        "detachedPeerIds": ["shell-aof-001"],
+    }, existing_manifest=initial_manifest)
+
+    assert detached_manifest["sessionId"] == "final-detach-demo"
+    assert detached_manifest["mode"] == "standalone"
+    assert detached_manifest["stateRevision"] == 2
+    assert detached_manifest["hostShell"] == initial_manifest["hostShell"]
+    assert detached_manifest["peers"] == []

@@ -31,9 +31,10 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - The first linked-session contract checks now cover `service/bootstrap`, `shell/open_companion`, and `session/attach` manifest revision updates, including standalone-to-linked promotion when a second peer attaches.
 - The first real shell edge now exists from Electron into AudioOnsetFinder: the 3DAudioGraphs toolbar requests `shell/open_companion`, launches `pipeline_gui.py` with shared attach args, and AudioOnsetFinder startup joins the shared session through `session/attach` before the GUI shows.
 - The reverse shell edge now also exists from AudioOnsetFinder into Electron: the PyQt main window requests `shell/open_companion`, launches `3DAudioGraphs-main/frontend` with shared attach args, and Electron startup joins the shared session through `session/attach` before the BrowserWindow shows.
-- The first bidirectional shell-edge slice has been validated with focused Python contract tests plus Electron CJS smoke and syntax checks, while preserving the earlier frontend production-build validation for the forward Electron-to-AudioOnsetFinder path.
-- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open command handlers, and the first bidirectional shell edge now exist, but `session/detach`, linked-session failure/reuse acceptance coverage, DataManager, and AudioManager are still not implemented.
-- The most important next move is to add `session/detach`, then cover launch failure, attach failure, and session reuse before moving manifest/write ownership toward DataManager.
+- The thin bootstrap now also accepts explicit `session/detach`, and the shared manifest helper can remove peers and downgrade linked sessions back to standalone without losing the session identity or host-shell context.
+- Focused acceptance coverage now also exercises shell-edge launch failure, companion attach failure, `session/detach`, and linked-session reuse/re-attach behavior using narrow Python contract tests.
+- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open/detach command handlers, bidirectional shell edges, and the first failure/reuse checks now exist, but DataManager and AudioManager are still not implemented.
+- The most important next move is to move manifest and mutable-asset ownership toward DataManager.
 
 ## 2. Current Baseline
 

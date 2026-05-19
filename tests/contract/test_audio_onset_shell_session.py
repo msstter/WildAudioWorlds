@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 PACKAGES_DIR = ROOT / "packages"
@@ -144,3 +146,87 @@ def test_audio_onset_shell_open_companion_bootstraps_session_and_launches_electr
     manifest = load_session_manifest(response["manifestPath"])
     assert manifest["launchContext"]["requestedCompanion"] == AUDIO_GRAPHS_SHELL_TYPE
     assert manifest["launchContext"]["requestedByShellId"] == LOCAL_INTEGRATION_HOST_SHELL_ID
+
+
+def test_audio_onset_companion_launch_failure_leaves_session_reusable(tmp_path):
+    def _failing_popen(_command, **_kwargs):
+        raise OSError("launcher failed")
+
+    with pytest.raises(OSError, match="launcher failed"):
+        open_audio_graphs_companion(
+            workspace_root=tmp_path,
+            bootstrap_root=ROOT,
+            frontend_root=ROOT / "3DAudioGraphs-main" / "frontend",
+            launch_process_factory=_failing_popen,
+        )
+
+    manifest_paths = list((tmp_path / "data" / "sessions").glob("*/session_manifest.json"))
+    assert len(manifest_paths) == 1
+    failed_manifest = load_session_manifest(manifest_paths[0])
+    assert failed_manifest["mode"] == "standalone"
+    assert failed_manifest["launchContext"]["requestedCompanion"] == AUDIO_GRAPHS_SHELL_TYPE
+    failed_session_id = failed_manifest["sessionId"]
+    failed_revision = failed_manifest["stateRevision"]
+
+    class _FakeProcess:
+        pid = 4343
+
+    def _successful_popen(_command, **_kwargs):
+        return _FakeProcess()
+
+    retry_response = open_audio_graphs_companion(
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+        frontend_root=ROOT / "3DAudioGraphs-main" / "frontend",
+        launch_process_factory=_successful_popen,
+    )
+
+    assert retry_response["ok"] is True
+    assert retry_response["sessionId"] == failed_session_id
+    assert retry_response["stateRevision"] == failed_revision + 1
+    assert retry_response["launchedProcess"]["pid"] == 4343
+
+
+def test_audio_onset_companion_attach_failure_leaves_session_reusable(tmp_path):
+    bootstrap_response = _handle_command({
+        "command": "service/bootstrap",
+        "workspaceRoot": str(tmp_path),
+        "session": {
+            "hostShell": {
+                "shellId": "shell-graph-001",
+                "shellType": "audio-graphs",
+                "startedAt": "2026-05-19T12:00:00+00:00",
+            },
+            "asset": {
+                "assetId": "asset-forest-001",
+                "activeRevisionId": "rev-0007",
+            },
+            "launchContext": {
+                "originatingShell": "audio-graphs",
+                "launchReason": "service-bootstrap",
+            },
+        },
+    })
+
+    with pytest.raises(RuntimeError, match="Session manifest not found"):
+        attach_to_local_integration_session({
+            "sessionId": "missing-session",
+            "manifestPath": bootstrap_response["session"]["manifestPath"],
+            "originatingShell": "audio-graphs",
+            "launchReason": "open-companion",
+        }, workspace_root=tmp_path, bootstrap_root=ROOT)
+
+    manifest_after_failure = load_session_manifest(bootstrap_response["session"]["manifestPath"])
+    assert manifest_after_failure["stateRevision"] == 1
+    assert manifest_after_failure["mode"] == "standalone"
+
+    attach_response = attach_to_local_integration_session({
+        "sessionId": bootstrap_response["session"]["sessionId"],
+        "manifestPath": bootstrap_response["session"]["manifestPath"],
+        "originatingShell": "audio-graphs",
+        "launchReason": "open-companion",
+    }, workspace_root=tmp_path, bootstrap_root=ROOT)
+
+    assert attach_response["ok"] is True
+    assert attach_response["sessionId"] == bootstrap_response["session"]["sessionId"]
+    assert attach_response["mode"] == "linked"

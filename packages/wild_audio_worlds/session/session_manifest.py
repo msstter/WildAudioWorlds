@@ -82,8 +82,15 @@ def _normalize_peers(
     host_shell: dict[str, Any],
     existing_peers: list[Any],
     now: str,
+    auto_attach_host_peer: bool = True,
+    detached_peer_ids: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     normalized: dict[str, dict[str, Any]] = {}
+    detached_ids = {
+        _text_or_empty(item)
+        for item in (detached_peer_ids or [])
+        if _text_or_empty(item)
+    }
 
     for source in (existing_peers, peers_payload):
         for item in source:
@@ -95,7 +102,7 @@ def _normalize_peers(
             normalized[shell_id] = _deep_merge(normalized.get(shell_id, {}), item)
 
     host_shell_id = _text_or_empty(host_shell.get("shellId"))
-    if host_shell_id:
+    if auto_attach_host_peer and host_shell_id:
         normalized[host_shell_id] = _deep_merge(normalized.get(host_shell_id, {}), {
             "shellId": host_shell_id,
             "shellType": _text_or_empty(host_shell.get("shellType")),
@@ -103,6 +110,9 @@ def _normalize_peers(
             "attachedAt": _text_or_empty(normalized.get(host_shell_id, {}).get("attachedAt")) or _text_or_empty(host_shell.get("startedAt")) or now,
             "lastSeenAt": now,
         })
+
+    for detached_peer_id in detached_ids:
+        normalized.pop(detached_peer_id, None)
 
     for shell_id, peer in list(normalized.items()):
         normalized[shell_id] = {
@@ -135,20 +145,29 @@ def build_session_manifest(
     if service_descriptor:
         service = _deep_merge(service, _mapping_or_empty(service_descriptor))
 
+    detached_peer_ids = [
+        _text_or_empty(item)
+        for item in _list_or_empty(session.get("detachedPeerIds"))
+        if _text_or_empty(item)
+    ]
+    auto_attach_host_value = session.get("autoAttachHostPeer")
+    auto_attach_host_peer = auto_attach_host_value if isinstance(auto_attach_host_value, bool) else True
+
     peers = _normalize_peers(
         _list_or_empty(session.get("peers")),
         host_shell=host_shell,
         existing_peers=_list_or_empty(existing.get("peers")),
         now=now,
+        auto_attach_host_peer=auto_attach_host_peer,
+        detached_peer_ids=detached_peer_ids,
     )
     requested_mode = _text_or_empty(session.get("mode"))
-    existing_mode = _text_or_empty(existing.get("mode"))
     if requested_mode:
         mode = requested_mode
     elif len(peers) > 1:
         mode = "linked"
     else:
-        mode = existing_mode or DEFAULT_SESSION_MODE
+        mode = DEFAULT_SESSION_MODE
 
     manifest = {
         "schemaVersion": _text_or_empty(session.get("schemaVersion")) or _text_or_empty(existing.get("schemaVersion")) or DEFAULT_SESSION_SCHEMA_VERSION,
