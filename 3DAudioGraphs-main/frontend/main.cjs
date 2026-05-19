@@ -8,6 +8,7 @@ const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
 const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
 const SHARED_SESSION_COMMAND_CONTRACTS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'command_contracts.cjs');
 const SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'recorded_audio_errors.cjs');
+const LOCAL_INTEGRATION_BOOTSTRAP_MODULE = path.resolve(__dirname, '..', '..', 'services', 'local_integration', 'bootstrap_service.py');
 const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
     ? require(SHARED_GRAPH_PATHS_MODULE)
     : {
@@ -622,14 +623,21 @@ let backendMonitorWindow = null;
 let backendCallStateCache = null;
 let backendCallLogsCache = [];
 let cachedBackendPythonCommand = null;
+let localIntegrationSessionCache = null;
 
 const BACKEND_CALL_LOG_LIMIT = 200;
+const LOCAL_INTEGRATION_HOST_SHELL_ID = `shell-graph-${randomUUID()}`;
+const LOCAL_INTEGRATION_HOST_STARTED_AT = new Date().toISOString();
 
 // Use dedicated GPU more aggressively.
 app.commandLine.appendSwitch('force_high_performance_gpu');
 
 function getProjectRoot() {
     return graphBackendPaths.resolveGraphProjectRoot(__dirname);
+}
+
+function getWorkspaceRoot() {
+    return path.resolve(getProjectRoot(), '..');
 }
 
 function isDevMode() {
@@ -828,6 +836,10 @@ function resolveRecordedAudioImportRunnerPath() {
     return graphBackendPaths.resolveRecordedAudioImportRunnerPath(__dirname);
 }
 
+function resolveLocalIntegrationBootstrapPath() {
+    return LOCAL_INTEGRATION_BOOTSTRAP_MODULE;
+}
+
 function sanitizeFileComponent(value, fallback = 'recorded-audio') {
     const sanitized = String(value || '')
         .trim()
@@ -859,25 +871,82 @@ function toNodeBuffer(value) {
     return null;
 }
 
-function runBackendSelectionAnalysis(requestPayload) {
+function buildLocalIntegrationSessionPayload({
+    launchReason = 'service-bootstrap',
+    asset = null,
+    selection = null,
+} = {}) {
+    const currentState = backendCallStateCache && typeof backendCallStateCache === 'object' && !Array.isArray(backendCallStateCache)
+        ? backendCallStateCache
+        : {};
+    const currentAsset = asset && typeof asset === 'object' && !Array.isArray(asset)
+        ? asset
+        : (currentState.asset && typeof currentState.asset === 'object' && !Array.isArray(currentState.asset)
+            ? currentState.asset
+            : {});
+    const currentSelection = selection && typeof selection === 'object' && !Array.isArray(selection)
+        ? selection
+        : (currentState.selection && typeof currentState.selection === 'object' && !Array.isArray(currentState.selection)
+            ? currentState.selection
+            : {});
+    const currentUiContext = currentState.uiContext && typeof currentState.uiContext === 'object' && !Array.isArray(currentState.uiContext)
+        ? currentState.uiContext
+        : {};
+
+    return {
+        sessionId: localIntegrationSessionCache?.sessionId || '',
+        mode: 'standalone',
+        hostShell: {
+            shellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+            shellType: 'audio-graphs',
+            startedAt: LOCAL_INTEGRATION_HOST_STARTED_AT,
+            version: app.getVersion(),
+        },
+        asset: {
+            assetId: currentAsset.id || '',
+            assetLabel: currentAsset.label || '',
+            sourceAudioPath: typeof currentAsset.audioUrl === 'string' ? currentAsset.audioUrl : '',
+            sourceKind: typeof currentAsset.audioUrl === 'string' && currentAsset.audioUrl.trim() !== ''
+                ? 'frontend-audio-asset'
+                : 'unknown',
+            activeRevisionId: currentAsset.revisionId || currentAsset.id || '',
+        },
+        transportState: {
+            playheadSec: Number(currentUiContext.playbackTimeSec || 0),
+            selectionWindow: currentSelection,
+        },
+        launchContext: {
+            originatingShell: 'audio-graphs',
+            launchReason,
+            requestedCompanion: '',
+            requestedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+        },
+        peers: [{
+            shellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+            shellType: 'audio-graphs',
+            status: 'attached',
+            attachedAt: LOCAL_INTEGRATION_HOST_STARTED_AT,
+            lastSeenAt: new Date().toISOString(),
+        }],
+    };
+}
+
+function runLocalIntegrationServiceCommand(command, payload, {
+    launchReason = command,
+    asset = null,
+    selection = null,
+    onStderrLine = null,
+} = {}) {
     return new Promise((resolve, reject) => {
-        const backendRunnerPath = resolveBackendRunnerPath();
-        if (!fs.existsSync(backendRunnerPath)) {
-            const failure = buildBackendFailure('backend-runner-missing', {
-                details: {
-                    backendRunnerPath,
-                },
-            });
-            const error = new Error(failure.error);
-            error.errorCode = failure.errorCode;
-            error.payload = failure;
-            reject(error);
+        const bootstrapPath = resolveLocalIntegrationBootstrapPath();
+        if (!fs.existsSync(bootstrapPath)) {
+            reject(new Error(`Local integration service bootstrap not found: ${bootstrapPath}`));
             return;
         }
 
         const pythonCommand = resolveBackendPythonCommand();
-        const child = spawn(pythonCommand, [backendRunnerPath], {
-            cwd: getProjectRoot(),
+        const child = spawn(pythonCommand, [bootstrapPath], {
+            cwd: getWorkspaceRoot(),
             env: buildBackendPythonEnv(pythonCommand),
         });
 
@@ -891,163 +960,152 @@ function runBackendSelectionAnalysis(requestPayload) {
         child.stderr.on('data', (chunk) => {
             const text = chunk.toString();
             stderr += text;
-            const trimmed = text.trim();
-            if (trimmed) {
-                appendBackendEventLog('backend-call-stderr', {
-                    stderrText: trimmed,
-                });
+            if (typeof onStderrLine === 'function') {
+                for (const line of text.split(/\r?\n/)) {
+                    const trimmed = line.trim();
+                    if (trimmed) {
+                        onStderrLine(trimmed);
+                    }
+                }
             }
         });
 
         child.on('error', (error) => {
-            const failure = buildBackendFailure('backend-analysis-failed', {
-                error: error?.message || undefined,
-                stderr,
-            });
             error.stderr = stderr;
-            error.errorCode = failure.errorCode;
-            error.payload = failure;
             reject(error);
         });
 
         child.on('close', (code) => {
             let parsed = null;
-
             try {
                 parsed = stdout.trim() ? JSON.parse(stdout) : null;
             } catch (parseError) {
-                const failure = buildBackendFailure('backend-response-parse-failed', {
-                    error: `${getBackendErrorMetadata('backend-response-parse-failed').message} ${parseError.message}`.trim(),
-                    stdout,
-                    stderr,
-                });
-                parseError.message = failure.error;
                 parseError.stdout = stdout;
                 parseError.stderr = stderr;
-                parseError.errorCode = failure.errorCode;
-                parseError.payload = failure;
                 reject(parseError);
                 return;
             }
 
-            if (parsed?.ok === false) {
-                const failure = enrichBackendFailure(parsed, {
-                    errorCode: parsed?.errorCode || 'backend-analysis-failed',
-                });
-                const error = new Error(failure.error);
-                error.payload = failure;
-                error.errorCode = failure.errorCode;
-                error.stderr = stderr;
-                reject(error);
-                return;
+            if (parsed?.session && typeof parsed.session === 'object') {
+                localIntegrationSessionCache = {
+                    ...(localIntegrationSessionCache || {}),
+                    ...parsed.session,
+                };
             }
 
-            if (code !== 0 && !parsed) {
-                const failure = buildBackendFailure('backend-analysis-exit', {
-                    error: `${getBackendErrorMetadata('backend-analysis-exit').message} Exit code ${code}.`,
-                    exitCode: code,
-                    stdout,
-                    stderr,
-                });
-                const error = new Error(failure.error);
-                error.payload = failure;
-                error.errorCode = failure.errorCode;
+            if (code !== 0 || parsed?.ok === false) {
+                const error = new Error(parsed?.error || `Local integration service command failed: ${command}`);
+                error.payload = parsed || null;
+                error.stderr = stderr;
                 error.stdout = stdout;
-                error.stderr = stderr;
                 reject(error);
                 return;
             }
 
-            resolve(parsed || buildBackendFailure('backend-no-payload', {
-                stderr,
-            }));
+            resolve(parsed || {
+                ok: true,
+                session: localIntegrationSessionCache,
+            });
         });
 
-        child.stdin.write(JSON.stringify(requestPayload));
+        child.stdin.write(JSON.stringify({
+            command,
+            workspaceRoot: getWorkspaceRoot(),
+            projectRoot: getProjectRoot(),
+            session: buildLocalIntegrationSessionPayload({
+                launchReason,
+                asset,
+                selection,
+            }),
+            payload,
+        }));
         child.stdin.end();
+    });
+}
+
+async function ensureLocalIntegrationSession({
+    launchReason = 'service-bootstrap',
+    asset = null,
+    selection = null,
+} = {}) {
+    if (localIntegrationSessionCache?.sessionId) {
+        return localIntegrationSessionCache;
+    }
+
+    const bootstrapResult = await runLocalIntegrationServiceCommand('service/bootstrap', {}, {
+        launchReason,
+        asset,
+        selection,
+    });
+    return bootstrapResult?.session || localIntegrationSessionCache;
+}
+
+function runBackendSelectionAnalysis(requestPayload) {
+    return new Promise((resolve, reject) => {
+        void (async () => {
+            try {
+                await ensureLocalIntegrationSession({
+                    launchReason: 'backend-call-bootstrap',
+                    asset: requestPayload?.asset || null,
+                    selection: requestPayload?.selection || null,
+                });
+                const integrationResponse = await runLocalIntegrationServiceCommand('backend-call/run', requestPayload, {
+                    launchReason: 'backend-call-run',
+                    asset: requestPayload?.asset || null,
+                    selection: requestPayload?.selection || null,
+                    onStderrLine: (stderrText) => {
+                        appendBackendEventLog('backend-call-stderr', {
+                            stderrText,
+                        });
+                    },
+                });
+                const response = integrationResponse?.response || null;
+                if (response?.ok === false) {
+                    const failure = enrichBackendFailure(response, {
+                        errorCode: response?.errorCode || 'backend-analysis-failed',
+                    });
+                    const error = new Error(failure.error);
+                    error.payload = failure;
+                    error.errorCode = failure.errorCode;
+                    reject(error);
+                    return;
+                }
+
+                resolve(response || buildBackendFailure('backend-no-payload'));
+            } catch (error) {
+                reject(error);
+            }
+        })();
     });
 }
 
 function runRecordedAudioImport(requestPayload) {
     return new Promise((resolve, reject) => {
-        const backendRunnerPath = resolveRecordedAudioImportRunnerPath();
-        if (!fs.existsSync(backendRunnerPath)) {
-            const failure = buildRecordedAudioFailure('recorded-audio-runner-missing', {
-                details: {
-                    backendRunnerPath,
-                },
-            });
-            const error = new Error(failure.error);
-            error.errorCode = failure.errorCode;
-            error.payload = failure;
-            reject(error);
-            return;
-        }
-
-        const pythonCommand = resolveBackendPythonCommand();
-        const child = spawn(pythonCommand, [backendRunnerPath], {
-            cwd: getProjectRoot(),
-            env: buildBackendPythonEnv(pythonCommand),
-        });
-
-        let stdout = '';
-        let stderr = '';
-
-        child.stdout.on('data', (chunk) => {
-            stdout += chunk.toString();
-        });
-
-        child.stderr.on('data', (chunk) => {
-            stderr += chunk.toString();
-        });
-
-        child.on('error', (error) => {
-            const failure = buildRecordedAudioFailure('recorded-audio-import-failed', {
-                error: error?.message || undefined,
-                stderr,
-            });
-            error.errorCode = failure.errorCode;
-            error.payload = failure;
-            error.stderr = stderr;
-            reject(error);
-        });
-
-        child.on('close', (code) => {
-            const outputLines = stdout.trim().split(/\r?\n/).filter(Boolean);
-            let response = null;
-
-            if (outputLines.length > 0) {
-                try {
-                    response = JSON.parse(outputLines[outputLines.length - 1]);
-                } catch (_error) {
-                    response = null;
-                }
-            }
-
-            if (code === 0 && response?.ok !== false) {
-                resolve(response || { ok: true });
-                return;
-            }
-
-            const failure = response?.ok === false
-                ? enrichRecordedAudioFailure(response, {
-                    errorCode: response?.errorCode || 'recorded-audio-import-failed',
-                })
-                : buildRecordedAudioFailure('recorded-audio-import-exit', {
-                    error: `${getRecordedAudioErrorMetadata('recorded-audio-import-exit').message} Exit code ${code}.`,
-                    exitCode: code,
-                    stderr,
-                    stdout,
+        void (async () => {
+            try {
+                await ensureLocalIntegrationSession({
+                    launchReason: 'recorded-audio-bootstrap',
                 });
-            const error = new Error(failure.error || getRecordedAudioErrorMetadata('recorded-audio-import-failed').message);
-            error.payload = failure;
-            error.errorCode = failure.errorCode;
-            error.stderr = stderr;
-            error.stdout = stdout;
-            reject(error);
-        });
+                const integrationResponse = await runLocalIntegrationServiceCommand('recorded-audio/import', requestPayload, {
+                    launchReason: 'recorded-audio-import',
+                });
+                const response = integrationResponse?.response || null;
+                if (response?.ok === false) {
+                    const failure = enrichRecordedAudioFailure(response, {
+                        errorCode: response?.errorCode || 'recorded-audio-import-failed',
+                    });
+                    const error = new Error(failure.error || getRecordedAudioErrorMetadata('recorded-audio-import-failed').message);
+                    error.payload = failure;
+                    error.errorCode = failure.errorCode;
+                    reject(error);
+                    return;
+                }
 
-        child.stdin.end(JSON.stringify(requestPayload));
+                resolve(response || { ok: true });
+            } catch (error) {
+                reject(error);
+            }
+        })();
     });
 }
 

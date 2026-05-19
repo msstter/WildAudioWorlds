@@ -2,7 +2,18 @@
 
 Last updated: 2026-05-19
 
-## Started
+## Current Phase
+
+- [x] Freeze and validate both legacy applications inside one root repository
+- [x] Establish the first shared `packages/wild_audio_worlds/` extraction surface
+- [x] Consolidate the first shared Electron/Python session vocabulary around backend-call and recorded-audio paths
+- [x] Define the standalone-shell and linked-session attach contract
+- [x] Stand up the local integration service bootstrap path
+- [x] Route the current Electron bridge through the local integration bootstrap for backend-call and recorded-audio commands
+- [ ] Introduce DataManager as the single writer for derived artifacts
+- [ ] Introduce AudioManager as the shared session authority
+
+## Completed Foundations
 
 - [x] Finalize the architecture and planning baseline in `WildAudioWorlds_Project_Plan.md`
 - [x] Initialize the WildAudioWorlds root git repository
@@ -14,22 +25,55 @@ Last updated: 2026-05-19
 - [x] Create the initial shared scaffold directories for apps, services, packages, tests, and docs
 - [x] Add the initial root packaging config for `packages/wild_audio_worlds/`
 - [x] Validate root environment imports and the 3DAudioGraphs frontend production build
-
-## Immediate Next
-
 - [x] Install and validate the root `wild_audio_worlds` Conda environment
 - [x] Install frontend dependencies for `3DAudioGraphs-main/frontend`
 - [x] Smoke-test standalone AudioOnsetFinder shell startup
 - [x] Smoke-test 3DAudioGraphs backend import and asset-processing path
 - [x] Begin extracting shared Python code into `packages/wild_audio_worlds/`
 
-## First Shared-Service Milestones
+## Completed Shared Package Extractions
 
-- [ ] Define the standalone-shell and linked-session attach contract
+- [x] Extract shared asset-store path and manifest helpers into `packages/wild_audio_worlds/data/`
+- [x] Extract shared graph runtime path helpers into `packages/wild_audio_worlds/graph/`
+- [x] Extract shared Python backend request contracts into `packages/wild_audio_worlds/session/command_contracts.py`
+- [x] Extract shared analysis-type and readiness metadata into `packages/wild_audio_worlds/session/analysis_types.*`
+- [x] Extract shared selection payload normalization into `packages/wild_audio_worlds/session/selection_contracts.*`
+- [x] Extract shared save/result metadata into `packages/wild_audio_worlds/session/result_metadata.*`
+- [x] Extract shared backend failure/error metadata into `packages/wild_audio_worlds/session/error_metadata.*`
+- [x] Extract shared backend failure formatting into `packages/wild_audio_worlds/session/failure_formatter.cjs`
+- [x] Extract shared backend-call log metadata and formatted monitor view-models into `packages/wild_audio_worlds/session/log_metadata.*`
+- [x] Extract shared backend-call and recorded-audio log event/message templates into `packages/wild_audio_worlds/session/log_events.*`
+- [x] Extract shared recorded-audio failure metadata into `packages/wild_audio_worlds/session/recorded_audio_errors.*`
+
+## Validated Current Baseline
+
 - [x] Add the first shared command-schema contract tests
-- [ ] Stand up the local integration service bootstrap path
-- [ ] Introduce DataManager as the single writer for derived artifacts
-- [ ] Introduce AudioManager as the shared session authority
+- [x] Validate the root Conda environment with the environment Python executable
+- [x] Validate the 3DAudioGraphs frontend production build with `npm run build`
+- [x] Validate AudioOnsetFinder shell startup offscreen through `pipeline_gui.main()`
+- [x] Validate the 3DAudioGraphs backend import runner end to end with generated outputs
+- [x] Validate shared Python and CJS session slices iteratively with smoke tests and syntax checks
+- [x] Validate backend-call monitor rendering against shared failure and log view-models supplied by Electron main
+- [x] Remove remaining recorded-audio failure wording from `frontend/main.cjs` in favor of shared session metadata
+
+## Immediate Next
+
+- [ ] Add the first linked-session smoke or contract checks before any PyQt/Electron attach rewiring
+- [ ] Extend the thin bootstrap from command-hosting compatibility wrappers into explicit `session/attach` and `shell/open_companion` flows
+- [ ] Start the first DataManager extraction around mutable asset publication, manifest ownership, and revision-safe writes
+
+## Newly Completed Step 5 Prep
+
+- [x] Write the standalone-shell versus linked-session attach contract as a concrete document plus first payload/schema draft
+- [x] Define the first session manifest fields for asset ID, revision ID, originating shell, launch context, playhead, and selection window
+
+## Newly Completed Bootstrap Slice
+
+- [x] Add the thin stdio local integration bootstrap in `services/local_integration/bootstrap_service.py`
+- [x] Add shared Python session manifest helpers in `packages/wild_audio_worlds/session/session_manifest.py`
+- [x] Publish session manifests under `data/sessions/<sessionId>/session_manifest.json` during bootstrap command handling
+- [x] Route the Electron backend-call and recorded-audio compatibility commands through the bootstrap instead of spawning runner scripts directly in shell-local bridge code
+- [x] Validate the bootstrap with Python contract tests, `main.cjs` syntax checks, direct `service/bootstrap` smoke, and direct `backend-call/run` smoke
 
 ## Notes
 
@@ -37,22 +81,7 @@ Last updated: 2026-05-19
 - Default shell target: AudioOnsetFinder PyQt GUI
 - Companion shell target: 3DAudioGraphs Electron app
 - Root Python environment file: `environment.yml`
-- Root Conda environment created successfully as `wild_audio_worlds`
-- Frontend dependencies installed successfully in `3DAudioGraphs-main/frontend`
-- Root environment imports validated with the environment's Python executable
-- 3DAudioGraphs frontend build validated successfully with `npm run build`
-- AudioOnsetFinder shell startup validated offscreen through the real `pipeline_gui.main()` path with exit code `0`
-- 3DAudioGraphs backend import runner validated end to end with a generated WAV and verified FFT, terrain envelope, MFCC, copied audio, and manifest outputs
-- First shared-code extraction completed for 3DAudioGraphs asset-store path and manifest helpers into `packages/wild_audio_worlds/data/audio_asset_store.py`
-- 3DAudioGraphs backend runner path and project-root resolution helpers extracted into `packages/wild_audio_worlds/graph/`
-- First shared backend command-contract types extracted into `packages/wild_audio_worlds/session/command_contracts.py`
-- Shared backend analysis-type registry extracted into `packages/wild_audio_worlds/session/analysis_types.json` with Python and Electron loaders
-- First shared selection payload normalizers extracted into `packages/wild_audio_worlds/session/selection_contracts.py` and mirrored by `packages/wild_audio_worlds/session/command_contracts.cjs`
-- JS selection window/range normalizers now run in the Electron bridge before Python, and backend-call-monitor action metadata now comes from the shared analysis-type registry
-- Monitor readiness preconditions and the first save/result labels now come from shared session metadata, with Python save results and Electron logs using the same save-artifact vocabulary
-- The first shared bridge/monitor failure metadata now lives in `packages/wild_audio_worlds/session/error_metadata.*`, with shared error codes/messages flowing through backend failures, the Electron bridge, and the monitor fallback path
-- The backend-call monitor now receives a shared `formattedFailure` view-model from `packages/wild_audio_worlds/session/failure_formatter.cjs`, so failed results render labeled sections for error code, message, stderr/stdout, traceback, and details instead of raw JSON dumps
-- The first shared backend-call log metadata now lives in `packages/wild_audio_worlds/session/log_metadata.*`, with the Electron main process attaching a shared `formattedLog` view-model so the monitor renders scope labels and structured detail sections without importing session CJS directly
-- The first shared backend-call log event/message templates now live in `packages/wild_audio_worlds/session/log_events.*`, and the backend-call path in `frontend/main.cjs` now emits start/completion/failure/stderr logs from shared event codes instead of hand-built inline strings
-- The first shared recorded-audio log event/message templates now also live in `packages/wild_audio_worlds/session/log_events.*`, and the recorded-audio import path in `frontend/main.cjs` now emits save/import/failure logs from shared event codes instead of inline strings
-- The remaining recorded-audio failure wording now also lives in shared session metadata under `packages/wild_audio_worlds/session/recorded_audio_errors.*`, and the recorded-audio import path in `frontend/main.cjs` now builds missing-buffer, runner-missing, generic import-failed, and unexpected-exit failures from shared error codes/messages instead of local strings
+- Session attach contract draft now lives in `docs/session_attach_contract.md`
+- Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
+- Current implementation phase: Step 4 is well underway, Step 5 now has both a contract draft and a working thin bootstrap, and the next major execution slice is linked-session attach checks plus the first explicit attach/open-companion flows
+- The highest-leverage next move is to validate linked-session behavior and then push manifest/write ownership toward DataManager instead of adding new shell-local orchestration

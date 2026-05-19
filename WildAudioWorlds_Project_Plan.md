@@ -1,6 +1,6 @@
 # WildAudioWorlds Project Planning Document
 
-Date: 2026-05-18
+Date: 2026-05-19
 
 ## 1. Main Goals and Objectives
 
@@ -15,6 +15,21 @@ Date: 2026-05-18
 - Introduce strict data ownership so raw source files, downloaded model-generation inputs, edited onset data, and generated graph assets cannot contaminate each other.
 - Consolidate setup into one clean Python environment definition and one clean Node/Electron toolchain.
 - Preserve legacy behavior during the migration by keeping existing entry points working until the new architecture proves parity.
+
+## 1A. Implementation Status Snapshot
+
+As of 2026-05-19, the project is no longer at planning-only stage. The baseline and the first shared extraction wave are already in place.
+
+- Repository bootstrap is complete, with both legacy codebases present in one root repo and the initial root environment/build flow validated.
+- Both legacy applications have been smoke-tested independently: AudioOnsetFinder through the PyQt shell path and 3DAudioGraphs through its backend import/analysis path.
+- A shared `packages/wild_audio_worlds/` surface now exists and already carries live `data/`, `graph/`, and `session/` code used by the Electron/Python bridge.
+- The `session/` package now owns the first shared request contracts, selection normalization, analysis metadata, readiness metadata, result metadata, backend failure metadata, backend failure formatting, log metadata, log event templates, recorded-audio log events, and recorded-audio error metadata.
+- The backend-call monitor now renders shared failure and log view-models produced in Electron main rather than inventing those monitor-facing structures locally.
+- A first standalone-shell versus linked-session attach contract draft now exists in `docs/session_attach_contract.md`, including the first session manifest, launch payload, and attach payload draft.
+- A thin stdio local integration bootstrap now exists in `services/local_integration/bootstrap_service.py`, publishes the first session manifests under `data/sessions/`, and already hosts the current backend-call and recorded-audio compatibility commands.
+- The Electron bridge now routes its backend-call and recorded-audio command execution through that bootstrap instead of directly orchestrating runner scripts in shell-local bridge code.
+- The project is effectively late Step 4 / mid-Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, and the first bootstrap path now exist, but linked-session attach flows, DataManager, and AudioManager are still not implemented.
+- The most important next move is to add linked-session checks and extend the bootstrap from compatibility command hosting into explicit attach/open-companion flows.
 
 ## 2. Current Baseline
 
@@ -311,7 +326,7 @@ This plan is ordered to minimize breakage and ends with the introduction of the 
 - Record parity baselines for key derived outputs, accepting only clearly documented and intentional differences.
 - Treat playhead sync, revision switching, companion-shell launch, and manifest publication as explicit acceptance checks, not informal manual assumptions.
 
-### Step 1. Create the WildAudioWorlds repository and freeze the current baseline
+### Step 1. Create the WildAudioWorlds repository and freeze the current baseline [Completed]
 
 - Create or initialize the new root repository and attach the remote `git@github.com:msstter/WildAudioWorlds.git`.
 - Bring both codebases into the new repo without deleting or flattening them immediately.
@@ -321,7 +336,7 @@ This plan is ordered to minimize breakage and ends with the introduction of the 
 
 Exit criteria: both legacy applications still exist in the repo and can be launched independently.
 
-### Step 2. Consolidate the environment before touching application logic
+### Step 2. Consolidate the environment before touching application logic [Completed]
 
 - Create one root `environment.yml` that can run the current 3DAudioGraphs backend and the current AudioOnsetFinder scripts.
 - Keep frontend dependencies separate in the current Electron app.
@@ -329,7 +344,7 @@ Exit criteria: both legacy applications still exist in the repo and can be launc
 
 Exit criteria: the 3DAudioGraphs Python backend scripts run in the new environment, and AudioOnsetFinder's main processing scripts import cleanly.
 
-### Step 3. Establish regression checks for both legacy paths
+### Step 3. Establish regression checks for both legacy paths [Completed]
 
 - Verify the current 3DAudioGraphs import and analysis flow with at least one sample asset.
 - Verify the current AudioOnsetFinder pipeline and onset-editor file loading with at least one sample asset.
@@ -337,7 +352,7 @@ Exit criteria: the 3DAudioGraphs Python backend scripts run in the new environme
 
 Exit criteria: you can prove later changes did not silently alter the core outputs.
 
-### Step 4. Extract a unified Python backend package without changing behavior
+### Step 4. Extract a unified Python backend package without changing behavior [In Progress]
 
 - Create a new backend package namespace such as `wild_audio_worlds`.
 - Move or wrap reusable logic from both repositories into shared domain modules and service modules under that package.
@@ -346,18 +361,37 @@ Exit criteria: you can prove later changes did not silently alter the core outpu
 - Keep the existing script entry points as compatibility shims that call the new package functions.
 - Do not redesign algorithms in this step. The goal is relocation and packaging, not behavioral change.
 
+Current progress inside Step 4:
+
+- Shared `data/`, `graph/`, and `session/` helpers already live under `packages/wild_audio_worlds/` and are in active use by the Electron/Python bridge.
+- The backend-call and recorded-audio paths already consume shared contracts and metadata instead of duplicating request, result, error, and log vocabulary in multiple places.
+- The remaining Step 4 work is to keep moving compatibility logic away from shell-local bridge code and toward the shared service/bootstrap boundary.
+
 Exit criteria: old script entry points still work, but their logic now resolves through the new shared package.
 
-### Step 5. Define the dual-shell launch model and shared command surface
+### Step 5. Define the dual-shell launch model and shared command surface [In Progress]
 
 - Define the contract for standalone-shell mode versus linked-session mode.
 - Add a minimal shell-launch and session-attach contract so either UI can open the other with active asset and session context.
 - Introduce a unified backend command schema that covers graph actions, onset actions, audio-edit actions, data queries, and shell-attach operations.
 - Initially support the new command schema through compatibility wrappers if needed.
 
+Completed Step 5 prep:
+
+- A first attach/session contract draft now exists in `docs/session_attach_contract.md`.
+- The first manifest fields for asset ID, revision ID, originating shell, launch context, playhead, selection window, peer snapshots, and service endpoint discovery are now drafted.
+- A thin stdio bootstrap now exists in `services/local_integration/bootstrap_service.py` and publishes session manifests while hosting the current backend-call and recorded-audio compatibility commands.
+- The current Electron bridge already routes those compatibility commands through the bootstrap.
+
+Remaining Step 5 targets:
+
+- Add the first linked-session smoke or contract checks around manifest publication and session bootstrap.
+- Extend the bootstrap into explicit `session/attach` and `shell/open_companion` flows.
+- Keep the first implementation thin and compatibility-oriented so both shells remain independently launchable while the shared service path is introduced.
+
 Exit criteria: either shell can start alone, and one shell can launch the other into the same session without bypassing shared services.
 
-### Step 6. Replace one-off Python runners with a persistent local integration service
+### Step 6. Replace one-off Python runners with a persistent local integration service [Not Started]
 
 - Introduce one long-lived Python service process instead of spawning a new Python process for every analysis request.
 - Allow stdio bootstrapping for simple single-shell startup paths, but use multi-client local IPC for linked sessions where both shells must attach to the same service instance.
@@ -366,7 +400,7 @@ Exit criteria: either shell can start alone, and one shell can launch the other 
 
 Exit criteria: both shells can issue backend commands during one app session without repeatedly booting Python, and a linked session can support both shells at once.
 
-### Step 7. Introduce DataManager as the only filesystem authority
+### Step 7. Introduce DataManager as the only filesystem authority [Not Started]
 
 - Implement DataManager in the Python service.
 - Move all path resolution, manifest generation, revision tracking, and artifact publication into DataManager.
@@ -376,7 +410,7 @@ Exit criteria: both shells can issue backend commands during one app session wit
 
 Exit criteria: no analysis module writes paths directly outside DataManager-owned roots.
 
-### Step 8. Introduce AudioManager as the authoritative session-sync layer
+### Step 8. Introduce AudioManager as the authoritative session-sync layer [Not Started]
 
 - Implement AudioManager in the shared local integration service.
 - Move ownership of active asset selection, playhead position, selection window, revision switching, and dirty-state broadcasting into AudioManager.
@@ -396,14 +430,13 @@ Exit criteria: moving the playhead in either view updates the other in real time
 - Do not remove legacy entry points until the unified command path is proven.
 - Do not design AudioManager or DataManager until the service boundaries and regression fixtures exist.
 
-## 8. Recommended First Execution Order
+## 8. Recommended Next Execution Order
 
-If work starts immediately after this planning phase, the next actions should be:
+The original first execution order has already been completed through the baseline, regression, and first shared-package extraction work. The next execution order should now be:
 
-1. Create the WildAudioWorlds root repository and attach the GitHub remote.
-2. Build the first root `environment.yml` from the proven shared dependencies only.
-3. Smoke test both legacy projects without any refactor.
-4. Define the standalone and linked-session launch contract, then create the new shared Python package and compatibility wrappers.
-5. Only then begin DataManager and AudioManager implementation.
+1. Add the first linked-session smoke or contract checks around session bootstrap, manifest publication, and session revision updates.
+2. Extend the bootstrap into explicit `session/attach` and `shell/open_companion` flows while keeping standalone mode stable.
+3. Start the first DataManager extraction around manifest ownership, mutable asset publication, revision-safe writes, and path authority.
+4. Only after those pieces are stable, begin AudioManager session authority for playhead, selection, and revision synchronization.
 
-This sequence gives you a working baseline before the state-management and data-isolation layers are introduced, which is the safest order for a merge of this size.
+This updated sequence keeps momentum on the merge while still protecting the current working bridge and preserving both shells as independently usable entry points.
