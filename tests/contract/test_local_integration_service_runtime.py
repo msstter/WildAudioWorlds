@@ -283,6 +283,92 @@ def test_persistent_service_emits_audio_manager_events(tmp_path):
 	assert poll_response["events"][0]["audioManager"]["transportState"]["playheadSec"] == 33.75
 
 
+def test_persistent_service_coordinates_dirty_and_revision_lifecycle(tmp_path):
+	bootstrap_response = _bootstrap_service(tmp_path)
+	endpoint = bootstrap_response["session"]["service"]["endpoint"]
+	manifest_path = Path(bootstrap_response["session"]["manifestPath"])
+
+	dirty_response = send_service_command(endpoint, {
+		"command": "asset/set_dirty_state",
+		"payload": {
+			"assetId": "asset-forest-001",
+			"pendingRevisionId": "rev-0008",
+			"updatedByShellId": "shell-aof-001",
+		},
+	})
+
+	assert dirty_response["ok"] is True
+	assert dirty_response["session"]["asset"]["activeRevisionId"] == "rev-0007"
+	assert dirty_response["session"]["asset"]["revisionState"] == {
+		"isDirty": True,
+		"status": "dirty",
+		"pendingRevisionId": "rev-0008",
+		"requestedAt": dirty_response["session"]["asset"]["revisionState"]["requestedAt"],
+		"updatedAt": dirty_response["session"]["asset"]["revisionState"]["updatedAt"],
+		"updatedByShellId": "shell-aof-001",
+	}
+
+	failed_response = send_service_command(endpoint, {
+		"command": "asset/revision_failed",
+		"payload": {
+			"assetId": "asset-forest-001",
+			"failedRevisionId": "rev-0008",
+			"error": "graph rebuild failed",
+			"updatedByShellId": "shell-graph-001",
+		},
+	})
+
+	assert failed_response["ok"] is True
+	assert failed_response["session"]["asset"]["activeRevisionId"] == "rev-0007"
+	assert failed_response["session"]["asset"]["revisionState"]["isDirty"] is True
+	assert failed_response["session"]["asset"]["revisionState"]["status"] == "failed"
+	assert failed_response["session"]["asset"]["revisionState"]["lastFailedRevisionId"] == "rev-0008"
+	assert failed_response["session"]["asset"]["revisionState"]["failureMessage"] == "graph rebuild failed"
+	assert "pendingRevisionId" not in failed_response["session"]["asset"]["revisionState"]
+
+	ready_response = send_service_command(endpoint, {
+		"command": "asset/revision_ready",
+		"payload": {
+			"assetId": "asset-forest-001",
+			"activeRevisionId": "rev-0008",
+			"asset": {
+				"audioUrl": "file:///tmp/forest-dawn-rev-0008.wav",
+				"analysisClipDurationSec": 14.5,
+			},
+			"updatedByShellId": "shell-graph-001",
+		},
+	})
+
+	assert ready_response["ok"] is True
+	assert ready_response["session"]["asset"]["activeRevisionId"] == "rev-0008"
+	assert ready_response["session"]["asset"]["audioUrl"] == "file:///tmp/forest-dawn-rev-0008.wav"
+	assert ready_response["session"]["asset"]["analysisClipDurationSec"] == 14.5
+	assert ready_response["session"]["asset"]["revisionState"]["isDirty"] is False
+	assert ready_response["session"]["asset"]["revisionState"]["status"] == "clean"
+	assert ready_response["session"]["asset"]["revisionState"]["lastReadyRevisionId"] == "rev-0008"
+	assert "pendingRevisionId" not in ready_response["session"]["asset"]["revisionState"]
+	assert "failureMessage" not in ready_response["session"]["asset"]["revisionState"]
+
+	manifest = load_session_manifest(manifest_path)
+	assert manifest["asset"]["activeRevisionId"] == "rev-0008"
+	assert manifest["asset"]["revisionState"]["isDirty"] is False
+	assert manifest["asset"]["revisionState"]["lastReadyRevisionId"] == "rev-0008"
+
+	poll_response = send_service_command(endpoint, {
+		"command": "events/poll",
+		"payload": {
+			"afterEventId": 0,
+			"limit": 20,
+		},
+	})
+
+	assert poll_response["ok"] is True
+	event_kinds = [event["kind"] for event in poll_response["events"]]
+	assert "asset/dirty_state_changed" in event_kinds
+	assert "asset/revision_failed" in event_kinds
+	assert "asset/revision_ready" in event_kinds
+
+
 def test_persistent_service_backend_call_returns_job_metadata(tmp_path):
 	_write_backend_runner(tmp_path / "3DAudioGraphs-main" / "backend" / "run_selection_analysis.py")
 	bootstrap_response = _bootstrap_service(tmp_path)

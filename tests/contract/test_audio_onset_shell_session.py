@@ -30,7 +30,10 @@ from local_integration_session import (  # noqa: E402
     open_audio_graphs_companion,
     poll_local_integration_events,
     publish_audio_onset_asset_state,
+    publish_audio_onset_dirty_state,
     publish_audio_onset_playhead,
+    publish_audio_onset_revision_failed,
+    publish_audio_onset_revision_ready,
     publish_audio_onset_selection,
 )
 from services.local_integration.bootstrap_service import _handle_command  # noqa: E402
@@ -366,6 +369,54 @@ def test_audio_onset_shell_can_poll_audio_manager_events(tmp_path):
     assert "asset/opened" in event_kinds
     assert "transport/time_changed" in event_kinds
     assert poll_response["eventsState"]["latestEventId"] >= len(poll_response["events"])
+
+
+def test_audio_onset_shell_revision_lifecycle_helpers_update_audio_manager_state(tmp_path):
+    audio_path = tmp_path / "session_asset.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    publish_audio_onset_asset_state(
+        audio_path,
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+    )
+
+    dirty_response = publish_audio_onset_dirty_state(
+        True,
+        pending_revision_id="rev-aof-0002",
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+    )
+
+    assert dirty_response["ok"] is True
+    assert dirty_response["session"]["asset"]["revisionState"]["isDirty"] is True
+    assert dirty_response["session"]["asset"]["revisionState"]["pendingRevisionId"] == "rev-aof-0002"
+
+    failed_response = publish_audio_onset_revision_failed(
+        error="save failed",
+        failed_revision_id="rev-aof-0002",
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+    )
+
+    assert failed_response["ok"] is True
+    assert failed_response["session"]["asset"]["revisionState"]["status"] == "failed"
+    assert failed_response["session"]["asset"]["revisionState"]["failureMessage"] == "save failed"
+
+    ready_response = publish_audio_onset_revision_ready(
+        active_revision_id="rev-aof-0002",
+        asset={
+            "sourceAudioPath": str(audio_path.resolve()),
+            "assetLabel": "session_asset.wav",
+        },
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+    )
+
+    assert ready_response["ok"] is True
+    assert ready_response["session"]["asset"]["activeRevisionId"] == "rev-aof-0002"
+    assert ready_response["session"]["asset"]["revisionState"]["isDirty"] is False
+    assert ready_response["session"]["asset"]["revisionState"]["status"] == "clean"
 
 
 def test_normalize_local_integration_audio_path_handles_file_urls(tmp_path):

@@ -1083,6 +1083,141 @@ function currentAudioManagerSessionAsset() {
     return normalizeAudioManagerAssetPayload(localIntegrationSessionCache?.asset || null);
 }
 
+function currentAudioManagerRevisionState() {
+    const revisionState = localIntegrationSessionCache?.asset?.revisionState;
+    return revisionState && typeof revisionState === 'object' && !Array.isArray(revisionState)
+        ? cloneJsonCompatibleValue(revisionState) || {}
+        : {};
+}
+
+function normalizeRevisionLifecycleAssetPayload(asset = null) {
+    const normalizedAsset = normalizeAudioManagerAssetPayload(asset);
+    if (!normalizedAsset) {
+        return null;
+    }
+
+    const assetId = typeof normalizedAsset.assetId === 'string' && normalizedAsset.assetId.trim() !== ''
+        ? normalizedAsset.assetId.trim()
+        : (typeof normalizedAsset.id === 'string' ? normalizedAsset.id.trim() : '');
+    const activeRevisionId = typeof normalizedAsset.activeRevisionId === 'string' && normalizedAsset.activeRevisionId.trim() !== ''
+        ? normalizedAsset.activeRevisionId.trim()
+        : (typeof normalizedAsset.revisionId === 'string' && normalizedAsset.revisionId.trim() !== ''
+            ? normalizedAsset.revisionId.trim()
+            : assetId);
+    if (!assetId) {
+        return null;
+    }
+
+    return {
+        ...normalizedAsset,
+        assetId,
+        activeRevisionId,
+        revisionId: typeof normalizedAsset.revisionId === 'string' && normalizedAsset.revisionId.trim() !== ''
+            ? normalizedAsset.revisionId.trim()
+            : activeRevisionId,
+    };
+}
+
+function doesRevisionLifecycleAssetMatchCurrentSession(asset = null) {
+    const normalizedAsset = normalizeRevisionLifecycleAssetPayload(asset);
+    const currentAsset = normalizeRevisionLifecycleAssetPayload(currentAudioManagerSessionAsset());
+    if (!normalizedAsset || !currentAsset) {
+        return false;
+    }
+
+    return normalizedAsset.assetId === currentAsset.assetId
+        && normalizedAsset.activeRevisionId === currentAsset.activeRevisionId;
+}
+
+async function publishLocalIntegrationRevisionReady(asset = null, {
+    launchReason = 'audio-manager-revision-ready',
+    force = false,
+} = {}) {
+    const normalizedAsset = normalizeRevisionLifecycleAssetPayload(asset || currentAudioManagerSessionAsset());
+    const sessionId = typeof localIntegrationSessionCache?.sessionId === 'string'
+        ? localIntegrationSessionCache.sessionId.trim()
+        : '';
+    if (!normalizedAsset?.assetId || !sessionId) {
+        return null;
+    }
+
+    const currentRevisionState = currentAudioManagerRevisionState();
+    if (!force) {
+        if (!doesRevisionLifecycleAssetMatchCurrentSession(normalizedAsset)) {
+            return null;
+        }
+        if (currentRevisionState.isDirty) {
+            return null;
+        }
+    }
+
+    return runLocalIntegrationServiceCommand('asset/revision_ready', {
+        sessionId,
+        assetId: normalizedAsset.assetId,
+        activeRevisionId: normalizedAsset.activeRevisionId,
+        asset: normalizedAsset,
+        updatedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }, {
+        launchReason,
+        asset: normalizedAsset,
+    });
+}
+
+async function publishLocalIntegrationRevisionFailed({
+    asset = null,
+    error = '',
+    isDirty = null,
+    launchReason = 'audio-manager-revision-failed',
+    force = false,
+} = {}) {
+    const normalizedAsset = normalizeRevisionLifecycleAssetPayload(asset || currentAudioManagerSessionAsset());
+    const sessionId = typeof localIntegrationSessionCache?.sessionId === 'string'
+        ? localIntegrationSessionCache.sessionId.trim()
+        : '';
+    if (!normalizedAsset?.assetId || !sessionId) {
+        return null;
+    }
+
+    if (!force && !doesRevisionLifecycleAssetMatchCurrentSession(normalizedAsset)) {
+        return null;
+    }
+
+    const currentRevisionState = currentAudioManagerRevisionState();
+    const resolvedIsDirty = typeof isDirty === 'boolean' ? isDirty : !!currentRevisionState.isDirty;
+
+    return runLocalIntegrationServiceCommand('asset/revision_failed', {
+        sessionId,
+        assetId: normalizedAsset.assetId,
+        failedRevisionId: typeof currentRevisionState.pendingRevisionId === 'string' && currentRevisionState.pendingRevisionId.trim() !== ''
+            ? currentRevisionState.pendingRevisionId.trim()
+            : normalizedAsset.activeRevisionId,
+        error: typeof error === 'string' ? error.trim() : '',
+        isDirty: resolvedIsDirty,
+        updatedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }, {
+        launchReason,
+        asset: normalizedAsset,
+    });
+}
+
+async function safelyPublishLocalIntegrationRevisionReady(asset = null, options = {}) {
+    try {
+        return await publishLocalIntegrationRevisionReady(asset, options);
+    } catch (error) {
+        console.warn('Failed to publish local-integration revision-ready state:', error);
+        return null;
+    }
+}
+
+async function safelyPublishLocalIntegrationRevisionFailed(options = {}) {
+    try {
+        return await publishLocalIntegrationRevisionFailed(options);
+    } catch (error) {
+        console.warn('Failed to publish local-integration revision-failed state:', error);
+        return null;
+    }
+}
+
 function currentAudioManagerSelectionWindow() {
     return normalizeAudioManagerSelectionWindow(localIntegrationSessionCache?.transportState?.selectionWindow || null);
 }
@@ -2184,6 +2319,10 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
                 savedAudioPath: response?.savedAudioPath || null,
             },
         });
+        await safelyPublishLocalIntegrationRevisionReady(response?.asset || null, {
+            launchReason: 'recorded-audio-revision-ready',
+            force: true,
+        });
         return response;
     } catch (error) {
         const failure = error?.payload
@@ -2300,6 +2439,11 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
                 details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
             });
             sendToBackendMonitor('backend-call-monitor:call-failed', failure);
+            await safelyPublishLocalIntegrationRevisionFailed({
+                asset: requestAsset,
+                error: failure.error || 'The backend action failed.',
+                launchReason: 'backend-call-revision-failed',
+            });
             sendToMainWindow('backend-call:completed', failure);
             return failure;
         }
@@ -2322,6 +2466,9 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             },
         });
         sendToBackendMonitor('backend-call-monitor:call-finished', completedResponse);
+        await safelyPublishLocalIntegrationRevisionReady(requestAsset, {
+            launchReason: 'backend-call-revision-ready',
+        });
         sendToMainWindow('backend-call:completed', completedResponse);
         return completedResponse;
     } catch (error) {
@@ -2339,6 +2486,11 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
         });
         sendToBackendMonitor('backend-call-monitor:call-failed', failure);
+        await safelyPublishLocalIntegrationRevisionFailed({
+            asset: requestAsset,
+            error: failure.error || error?.message || 'The backend action failed.',
+            launchReason: 'backend-call-revision-failed',
+        });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
     }

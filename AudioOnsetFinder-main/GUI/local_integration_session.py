@@ -371,6 +371,145 @@ def publish_audio_onset_asset_state(
     return response
 
 
+def publish_audio_onset_dirty_state(
+    is_dirty: bool,
+    *,
+    asset_id: str = "",
+    pending_revision_id: str | None = None,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-dirty-state",
+    )
+
+    current_asset = _mapping_or_empty(_resolve_cached_audio_manager_state(workspace).get("asset"))
+    resolved_asset_id = _text_or_empty(asset_id) or _text_or_empty(current_asset.get("assetId"))
+    if not resolved_asset_id:
+        return {}
+
+    payload: dict[str, Any] = {
+        "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+        "assetId": resolved_asset_id,
+        "isDirty": bool(is_dirty),
+        "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }
+    if pending_revision_id is not None:
+        payload["pendingRevisionId"] = _text_or_empty(pending_revision_id)
+
+    return _run_local_integration_command(
+        {
+            "command": "asset/set_dirty_state",
+            "workspaceRoot": str(workspace),
+            "payload": payload,
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+
+
+def publish_audio_onset_revision_ready(
+    *,
+    active_revision_id: str = "",
+    asset: dict[str, Any] | None = None,
+    asset_id: str = "",
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-revision-ready",
+    )
+
+    current_asset = _mapping_or_empty(_resolve_cached_audio_manager_state(workspace).get("asset"))
+    resolved_asset_id = _text_or_empty(asset_id) or _text_or_empty(current_asset.get("assetId"))
+    if not resolved_asset_id:
+        raise ValueError("AudioOnsetFinder revision-ready publish requires an assetId.")
+
+    resolved_active_revision_id = (
+        _text_or_empty(active_revision_id)
+        or _text_or_empty(current_asset.get("activeRevisionId"))
+        or _text_or_empty(current_asset.get("revisionId"))
+        or resolved_asset_id
+    )
+
+    return _run_local_integration_command(
+        {
+            "command": "asset/revision_ready",
+            "workspaceRoot": str(workspace),
+            "payload": {
+                "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+                "assetId": resolved_asset_id,
+                "activeRevisionId": resolved_active_revision_id,
+                "asset": _mapping_or_empty(asset),
+                "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+            },
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+
+
+def publish_audio_onset_revision_failed(
+    *,
+    error: str,
+    failed_revision_id: str = "",
+    asset_id: str = "",
+    is_dirty: bool | None = None,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-revision-failed",
+    )
+
+    current_asset = _mapping_or_empty(_resolve_cached_audio_manager_state(workspace).get("asset"))
+    resolved_asset_id = _text_or_empty(asset_id) or _text_or_empty(current_asset.get("assetId"))
+    if not resolved_asset_id:
+        raise ValueError("AudioOnsetFinder revision-failed publish requires an assetId.")
+
+    revision_state = _mapping_or_empty(current_asset.get("revisionState"))
+    resolved_failed_revision_id = (
+        _text_or_empty(failed_revision_id)
+        or _text_or_empty(revision_state.get("pendingRevisionId"))
+        or _text_or_empty(current_asset.get("activeRevisionId"))
+        or _text_or_empty(current_asset.get("revisionId"))
+        or resolved_asset_id
+    )
+    resolved_is_dirty = bool(is_dirty) if isinstance(is_dirty, bool) else bool(revision_state.get("isDirty"))
+
+    return _run_local_integration_command(
+        {
+            "command": "asset/revision_failed",
+            "workspaceRoot": str(workspace),
+            "payload": {
+                "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+                "assetId": resolved_asset_id,
+                "failedRevisionId": resolved_failed_revision_id,
+                "error": _text_or_empty(error),
+                "isDirty": resolved_is_dirty,
+                "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+            },
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+
+
 def publish_audio_onset_playhead(
     playhead_sec: float,
     *,
@@ -846,7 +985,10 @@ __all__ = [
     "open_audio_graphs_companion",
     "poll_local_integration_events",
     "publish_audio_onset_asset_state",
+    "publish_audio_onset_dirty_state",
     "publish_audio_onset_playhead",
+    "publish_audio_onset_revision_failed",
+    "publish_audio_onset_revision_ready",
     "publish_audio_onset_selection",
     "resolve_local_integration_bootstrap_path",
 ]

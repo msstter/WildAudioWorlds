@@ -327,7 +327,10 @@ try:
         clear_audio_onset_selection as _clear_audio_onset_selection_impl,
         normalize_local_integration_audio_path as _normalize_local_integration_audio_path_impl,
         publish_audio_onset_asset_state as _publish_audio_onset_asset_state_impl,
+        publish_audio_onset_dirty_state as _publish_audio_onset_dirty_state_impl,
         publish_audio_onset_playhead as _publish_audio_onset_playhead_impl,
+        publish_audio_onset_revision_failed as _publish_audio_onset_revision_failed_impl,
+        publish_audio_onset_revision_ready as _publish_audio_onset_revision_ready_impl,
         publish_audio_onset_selection as _publish_audio_onset_selection_impl,
     )
 except Exception:
@@ -336,14 +339,20 @@ except Exception:
             clear_audio_onset_selection as _clear_audio_onset_selection_impl,
             normalize_local_integration_audio_path as _normalize_local_integration_audio_path_impl,
             publish_audio_onset_asset_state as _publish_audio_onset_asset_state_impl,
+            publish_audio_onset_dirty_state as _publish_audio_onset_dirty_state_impl,
             publish_audio_onset_playhead as _publish_audio_onset_playhead_impl,
+            publish_audio_onset_revision_failed as _publish_audio_onset_revision_failed_impl,
+            publish_audio_onset_revision_ready as _publish_audio_onset_revision_ready_impl,
             publish_audio_onset_selection as _publish_audio_onset_selection_impl,
         )
     except Exception:
         _clear_audio_onset_selection_impl = _noop_local_integration_publish
         _normalize_local_integration_audio_path_impl = lambda audio_path=None: os.path.abspath(str(audio_path)) if audio_path else ""
         _publish_audio_onset_asset_state_impl = _noop_local_integration_publish
+        _publish_audio_onset_dirty_state_impl = _noop_local_integration_publish
         _publish_audio_onset_playhead_impl = _noop_local_integration_publish
+        _publish_audio_onset_revision_failed_impl = _noop_local_integration_publish
+        _publish_audio_onset_revision_ready_impl = _noop_local_integration_publish
         _publish_audio_onset_selection_impl = _noop_local_integration_publish
 
 
@@ -3044,6 +3053,35 @@ class OnsetEditorPanel(QWidget):
         except Exception as exc:
             print(f"[local-integration] Failed to publish onset-editor asset state: {exc}", file=sys.stderr)
 
+    def _publish_local_integration_dirty_state(self, is_dirty: bool) -> None:
+        if not self._audio_path:
+            return
+        try:
+            _publish_audio_onset_dirty_state_impl(bool(is_dirty))
+        except Exception as exc:
+            print(f"[local-integration] Failed to publish onset-editor dirty state: {exc}", file=sys.stderr)
+
+    def _publish_local_integration_revision_ready(self) -> None:
+        if not self._audio_path:
+            return
+        try:
+            self._publish_local_integration_asset_state(self._audio_path)
+            _publish_audio_onset_revision_ready_impl()
+        except Exception as exc:
+            print(f"[local-integration] Failed to publish onset-editor revision-ready state: {exc}", file=sys.stderr)
+
+    def _publish_local_integration_revision_failed(self, error: Exception | str) -> None:
+        if not self._audio_path:
+            return
+        try:
+            self._publish_local_integration_asset_state(self._audio_path)
+            _publish_audio_onset_revision_failed_impl(
+                error=str(error),
+                is_dirty=bool(self._dirty),
+            )
+        except Exception as exc:
+            print(f"[local-integration] Failed to publish onset-editor revision-failed state: {exc}", file=sys.stderr)
+
     def _publish_local_integration_playhead(self, time_sec: float | None, *, force: bool = False) -> None:
         if time_sec is None:
             return
@@ -3735,8 +3773,11 @@ class OnsetEditorPanel(QWidget):
 
     def _push_undo(self):
         """Snapshot current onsets to undo stack (call after mutation)."""
+        was_dirty = bool(self._dirty)
         self._undo_stack.push(list(self._onset_times))
         self._dirty = True
+        if not was_dirty:
+            self._publish_local_integration_dirty_state(True)
         self._update_button_states()
 
     def _add_onset(self, time_sec: float):
@@ -4852,46 +4893,34 @@ class OnsetEditorPanel(QWidget):
 
         n_layers = len(self._layers)
         saved_layer_paths: list[str] = []
+        status_message = ""
 
-        if n_layers == 1:
-            # Single layer: save to main label path only
-            _save_labels(self._label_path, self._onset_times)
-            saved_layer_paths.append(self._label_path)
-        else:
-            # Multiple layers: save each to a numbered file
-            for li, layer in enumerate(self._layers):
-                layer_path = os.path.join(
-                    folder, f"{stem}_labels_{li + 1}.txt")
-                _save_labels(layer_path, layer["onset_times"])
-                saved_layer_paths.append(layer_path)
-            # Also save active layer to the main path for compat
-            _save_labels(self._label_path, self._onset_times)
+        try:
+            if n_layers == 1:
+                # Single layer: save to main label path only
+                _save_labels(self._label_path, self._onset_times)
+                saved_layer_paths.append(self._label_path)
+            else:
+                # Multiple layers: save each to a numbered file
+                for li, layer in enumerate(self._layers):
+                    layer_path = os.path.join(
+                        folder, f"{stem}_labels_{li + 1}.txt")
+                    _save_labels(layer_path, layer["onset_times"])
+                    saved_layer_paths.append(layer_path)
+                # Also save active layer to the main path for compat
+                _save_labels(self._label_path, self._onset_times)
 
-        self._dirty = False
-        # Mark all layers as clean
-        for layer in self._layers:
-            layer["dirty"] = False
+            if n_layers == 1:
+                status_message = (
+                    f"Saved {len(self._onset_times)} onsets → {os.path.basename(self._label_path)}"
+                )
+            else:
+                total = sum(len(layer["onset_times"]) for layer in self._layers)
+                status_message = f"Saved {total} onsets across {n_layers} layers → {stem}_labels_*.txt"
 
-        if self._onset_source != "excel":
-            self._onset_file_edit.setText(os.path.basename(self._label_path))
-        self._update_button_states()
-        self._update_status_summary()
-
-        if n_layers == 1:
-            self._status_label.setText(
-                f"Saved {len(self._onset_times)} onsets → {os.path.basename(self._label_path)}"
-            )
-        else:
-            total = sum(len(l["onset_times"]) for l in self._layers)
-            self._status_label.setText(
-                f"Saved {total} onsets across {n_layers} layers → {stem}_labels_*.txt"
-            )
-        self.onsetsSaved.emit(self._label_path, len(self._onset_times))
-
-        # Also save to Excel if using Excel source
-        if self._onset_source == "excel" and self._excel_onset_path and _HAS_EXCEL_IO:
-            audio_filename = os.path.basename(self._audio_path)
-            try:
+            # Also save to Excel if using Excel source
+            if self._onset_source == "excel" and self._excel_onset_path and _HAS_EXCEL_IO:
+                audio_filename = os.path.basename(self._audio_path)
                 if n_layers == 1:
                     # Use custom layer name if user provided one
                     lyr_name = self._layers[0]["name"]
@@ -4924,21 +4953,34 @@ class OnsetEditorPanel(QWidget):
                         )
                 xl_base = os.path.basename(self._excel_onset_path)
                 if n_layers == 1:
-                    self._status_label.setText(
+                    status_message = (
                         f"Saved {len(self._onset_times)} onsets → "
-                        f"{os.path.basename(self._label_path)} + {xl_base}")
+                        f"{os.path.basename(self._label_path)} + {xl_base}"
+                    )
                 else:
-                    self._status_label.setText(
-                        f"Saved {n_layers} layers → {stem}_labels_*.txt + {xl_base}")
-            except Exception as exc:
-                self._status_label.setText(
-                    f"Saved .txt OK but Excel error: {exc}")
+                    status_message = f"Saved {n_layers} layers → {stem}_labels_*.txt + {xl_base}"
 
-        # Export focus regions JSON (used by onset_finder for spectral matching)
-        self._save_focus_regions_json(folder, stem)
+            # Export focus regions JSON (used by onset_finder for spectral matching)
+            self._save_focus_regions_json(folder, stem)
 
-        # Export per-layer settings (used by pipeline's "Specify Layers")
-        self._save_onset_layer_settings()
+            # Export per-layer settings (used by pipeline's "Specify Layers")
+            self._save_onset_layer_settings()
+        except Exception as exc:
+            self._publish_local_integration_revision_failed(exc)
+            raise
+
+        self._dirty = False
+        # Mark all layers as clean
+        for layer in self._layers:
+            layer["dirty"] = False
+        self._publish_local_integration_revision_ready()
+
+        if self._onset_source != "excel":
+            self._onset_file_edit.setText(os.path.basename(self._label_path))
+        self._update_button_states()
+        self._update_status_summary()
+        self._status_label.setText(status_message)
+        self.onsetsSaved.emit(self._label_path, len(self._onset_times))
 
     def _save_focus_regions_json(self, folder: str, stem: str):
         """Write per-file focus regions to a JSON file next to the audio.

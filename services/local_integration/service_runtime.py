@@ -333,6 +333,9 @@ class _ServiceState:
 		self,
 		previous_manifest: dict[str, Any] | None,
 		next_manifest: dict[str, Any] | None,
+		*,
+		preferred_asset_event_kind: str = "",
+		asset_event_payload: dict[str, Any] | None = None,
 	) -> list[dict[str, Any]]:
 		previous_snapshot = self._audio_manager_snapshot(previous_manifest)
 		next_snapshot = self._audio_manager_snapshot(next_manifest)
@@ -344,20 +347,27 @@ class _ServiceState:
 		queued_events: list[dict[str, Any]] = []
 
 		if self._serialize_event_value(previous_asset) != self._serialize_event_value(next_asset):
-			asset_event_kind = "asset/updated"
+			asset_event_kind = _text_or_empty(preferred_asset_event_kind) or "asset/updated"
 			if not next_asset:
 				asset_event_kind = "asset/cleared"
-			elif (
+			elif not _text_or_empty(preferred_asset_event_kind) and (
 				_text_or_empty(previous_asset.get("assetId")) != _text_or_empty(next_asset.get("assetId"))
 				or _text_or_empty(previous_asset.get("sourceAudioPath")) != _text_or_empty(next_asset.get("sourceAudioPath"))
 			):
 				asset_event_kind = "asset/opened"
-			elif _text_or_empty(previous_asset.get("activeRevisionId")) != _text_or_empty(next_asset.get("activeRevisionId")):
+			elif not _text_or_empty(preferred_asset_event_kind) and _text_or_empty(previous_asset.get("activeRevisionId")) != _text_or_empty(next_asset.get("activeRevisionId")):
 				asset_event_kind = "asset/revision_changed"
 
-			queued_events.append(self._append_session_event(asset_event_kind, _mapping_or_empty(next_manifest), {
-				"asset": next_asset,
-			}))
+			normalized_asset_payload = _mapping_or_empty(asset_event_payload)
+			if not normalized_asset_payload:
+				normalized_asset_payload = {
+					"asset": next_asset,
+				}
+			revision_state = _mapping_or_empty(next_asset.get("revisionState"))
+			if revision_state and "revisionState" not in normalized_asset_payload:
+				normalized_asset_payload["revisionState"] = revision_state
+
+			queued_events.append(self._append_session_event(asset_event_kind, _mapping_or_empty(next_manifest), normalized_asset_payload))
 
 		previous_playhead_key = self._serialize_event_value(previous_transport.get("playheadSec"))
 		next_playhead_key = self._serialize_event_value(next_transport.get("playheadSec"))
@@ -477,6 +487,48 @@ class _ServiceState:
 		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.set_revision(_mapping_or_empty(envelope.get("payload")))
 		self._publish_audio_manager_events(previous_manifest, manifest)
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_asset_dirty_state_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="asset/set_dirty_state")
+		previous_manifest = self.audio_manager.current_manifest()
+		manifest = self.audio_manager.set_dirty_state(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(
+			previous_manifest,
+			manifest,
+			preferred_asset_event_kind="asset/dirty_state_changed",
+		)
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_asset_revision_ready_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="asset/revision_ready")
+		previous_manifest = self.audio_manager.current_manifest()
+		manifest = self.audio_manager.mark_revision_ready(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(
+			previous_manifest,
+			manifest,
+			preferred_asset_event_kind="asset/revision_ready",
+		)
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_asset_revision_failed_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="asset/revision_failed")
+		previous_manifest = self.audio_manager.current_manifest()
+		manifest = self.audio_manager.mark_revision_failed(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(
+			previous_manifest,
+			manifest,
+			preferred_asset_event_kind="asset/revision_failed",
+		)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
@@ -851,6 +903,15 @@ class _LocalIntegrationSocketServer(_ThreadingUnixStreamServer):
 
 		if command == "asset/set_revision":
 			return self.state.handle_asset_revision_request(envelope)
+
+		if command == "asset/set_dirty_state":
+			return self.state.handle_asset_dirty_state_request(envelope)
+
+		if command == "asset/revision_ready":
+			return self.state.handle_asset_revision_ready_request(envelope)
+
+		if command == "asset/revision_failed":
+			return self.state.handle_asset_revision_failed_request(envelope)
 
 		if command in {"shell/open_companion", "session/attach", "session/detach"}:
 			return self.state.handle_manifest_session_command(envelope)

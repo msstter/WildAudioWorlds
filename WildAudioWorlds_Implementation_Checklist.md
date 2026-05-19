@@ -19,7 +19,9 @@ Last updated: 2026-05-19
 - [x] Add canonical shell consumption and event delivery for AudioManager asset, transport, and revision state
 - [x] Build backend analysis requests and readiness checks from canonical service-owned session state
 - [x] Audit the merged Electron and Qt control surface and add the first always-visible cross-app launchers
-- [ ] Add dirty-state, revision-ready, and revision-failure coordination on top of the shared session authority
+- [x] Add dirty-state, revision-ready, and revision-failure coordination on top of the shared session authority
+- [x] Route onset-editor save completion and first Electron backend completion hooks onto the shared revision lifecycle
+- [ ] Carry explicit next-revision identity through remaining revision-producing completion paths
 
 ## Completed Foundations
 
@@ -78,8 +80,7 @@ Last updated: 2026-05-19
 
 ## Immediate Next
 
-- [ ] Add service-owned dirty-state broadcasting plus `asset/revision_ready` / `asset/revision_failed` coordination so both shells switch revisions through one canonical event path
-- [ ] Route onset-editor save or edit completion and backend job completion onto that coordinated revision lifecycle instead of shell-local completion handling
+- [ ] Carry explicit next-revision identity through remaining revision-producing backend jobs and onset-edit pipelines so `asset/revision_ready` can promote newly-derived revisions instead of only confirming the current active revision
 - [ ] Expand contract and integration coverage around canonical event delivery, live-source transitions, revision switching, companion attach or detach reuse, and superseded jobs
 - [ ] Decide which backend-monitor and companion-only actions should be promoted into direct main-shell shortcuts after the merged control-surface audit
 
@@ -178,6 +179,18 @@ Last updated: 2026-05-19
 - [x] Preserve richer canonical asset metadata in the shared AudioManager state so backend analysis requests can reuse those fields without shell-local reconstruction
 - [x] Route backend-monitor readiness through an explicit Electron-main canonical readiness query instead of treating the pushed monitor snapshot as the selection-readiness source of truth
 
+## Newly Completed AudioManager Revision Lifecycle Slice
+
+- [x] Add service-owned `asset/set_dirty_state`, `asset/revision_ready`, and `asset/revision_failed` commands so the persistent local integration daemon can own dirty-state and revision lifecycle transitions without promoting the next revision early
+- [x] Publish `asset/dirty_state_changed`, `asset/revision_ready`, and `asset/revision_failed` events through the canonical AudioManager event stream while preserving the current active revision until the ready transition lands
+- [x] Wire AudioOnsetFinder's onset editor to publish first-edit dirty transitions and save-to-clean transitions through the shared local-integration helper, and validate the new helper surface with focused local-integration and onset-editor tests
+
+## Newly Completed Revision Producer Completion Slice
+
+- [x] Route onset-editor save completion through `asset/revision_ready` and save failures through `asset/revision_failed`, and fix the save flow so clean-state updates happen only after the full save bundle succeeds
+- [x] Route recorded-audio import completion through `asset/revision_ready` with the returned manifest entry so new imported assets become canonical through the shared lifecycle rather than only through renderer-local load flow
+- [x] Route current-asset backend-call success and failure through lifecycle-ready or failed updates when the finishing job still matches the active canonical asset, so stale job completions do not mutate newer session state
+
 ## Newly Completed Cross-App Control Surface Slice
 
 - [x] Audit the merged Electron shell, backend monitor, and AudioOnsetFinder companion controls in `docs/merged_control_surface_audit.md`
@@ -198,6 +211,8 @@ Last updated: 2026-05-19
 - Focused Step 8 foundation validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, and `tests/contract/test_audio_onset_shell_session.py`
 - Focused Step 8 shell-publish validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py`, `node --check 3DAudioGraphs-main/frontend/main.cjs`, and `node --check 3DAudioGraphs-main/frontend/src/main.js`
 - Focused Step 8 canonical read-side validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py`, `node --check 3DAudioGraphs-main/frontend/main.cjs`, `node --check 3DAudioGraphs-main/frontend/preload.cjs`, `node --check 3DAudioGraphs-main/frontend/public/backend-call-monitor.js`, and `node --check 3DAudioGraphs-main/frontend/src/main.js`
+- Focused Step 8 revision lifecycle validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_audio_onset_shell_session.py`, and `AudioOnsetFinder-main/GUI/test_onset_editor.py` through the new dirty, failed, and ready command surface plus the onset-editor dirty-state publish hook
+- Focused Step 8 producer-completion validation now also passes for `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py`, and `node --check 3DAudioGraphs-main/frontend/main.cjs` through the onset save-completion routing, save-failure routing, and Electron backend completion hooks
 - Focused Step 7 close-out validation now passes for `tests/contract/test_data_manager.py` plus the AudioOnsetFinder writer/Excel/pipeline bundle (`tests/test_shared_output_writers.py`, `tests/test_onset_exports.py`, `tests/test_excel_onset_io.py`, `tests/test_pipeline_file_selection.py`)
-- Current implementation phase: Step 6 and Step 7 are complete, and Step 8 is now in progress through the service-owned AudioManager publish/read path, canonical backend-request path, and first cross-app control-surface polish
-- The highest-leverage next move is to add service-owned dirty-state plus revision-ready/revision-failed coordination, then route edit completion and backend-job completion onto that canonical revision lifecycle
+- Current implementation phase: Step 6 and Step 7 are complete, and Step 8 is now in progress through the service-owned AudioManager publish/read path, canonical backend-request path, cross-app control-surface polish, the first dirty or ready or failed revision lifecycle slice, and the first producer-completion routing slice
+- The highest-leverage next move is to carry explicit next-revision identity through remaining revision-producing completion paths, then expand coverage around revision switching and remaining shell-local cache collapse

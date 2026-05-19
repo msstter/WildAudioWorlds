@@ -705,6 +705,79 @@ def test_panel_applies_local_integration_audio_manager_state_without_republishin
     assert published == {}
 
 
+def test_panel_publishes_local_integration_dirty_state_on_first_edit_and_save(qapp, monkeypatch, tmp_path):
+    dirty_publishes: list[bool] = []
+    revision_ready_publishes: list[bool] = []
+
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_dirty_state_impl",
+        lambda is_dirty, **_kwargs: dirty_publishes.append(bool(is_dirty)),
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_asset_state_impl",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_revision_ready_impl",
+        lambda **_kwargs: revision_ready_publishes.append(True),
+    )
+
+    panel = OnsetEditorPanel()
+    panel._audio_path = str(tmp_path / "session_asset.wav")
+    panel._label_path = str(tmp_path / "session_asset_labels.txt")
+    panel._refresh_viewer_markers = lambda: None
+    panel._refresh_table = lambda: None
+    panel._update_button_states = lambda: None
+    panel._update_status_summary = lambda: None
+    panel._save_layer_state = lambda: None
+
+    panel._add_onset(0.5)
+    panel._add_onset(1.0)
+
+    assert dirty_publishes == [True]
+
+    panel._save_labels()
+
+    assert dirty_publishes == [True]
+    assert revision_ready_publishes == [True]
+
+
+def test_panel_publishes_local_integration_revision_failed_on_save_error(qapp, monkeypatch, tmp_path):
+    revision_failed_publishes: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_asset_state_impl",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_revision_failed_impl",
+        lambda **kwargs: revision_failed_publishes.append(kwargs),
+    )
+    monkeypatch.setattr(
+        "onset_editor._save_labels",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")),
+    )
+
+    panel = OnsetEditorPanel()
+    panel._audio_path = str(tmp_path / "session_asset.wav")
+    panel._label_path = str(tmp_path / "session_asset_labels.txt")
+    panel._onset_times = [0.5]
+    panel._dirty = True
+    panel._refresh_viewer_markers = lambda: None
+    panel._refresh_table = lambda: None
+    panel._update_button_states = lambda: None
+    panel._update_status_summary = lambda: None
+    panel._save_layer_state = lambda: None
+
+    with pytest.raises(OSError, match="disk full"):
+        panel._save_labels()
+
+    assert revision_failed_publishes == [{
+        "error": "disk full",
+        "is_dirty": True,
+    }]
+
+
 def test_analyze_signals_dialog_shows_recommendations(qapp):
     """AnalyzeSignalsDialog should display recommendation text when provided."""
     recommendation = {

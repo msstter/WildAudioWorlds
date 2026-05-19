@@ -358,14 +358,16 @@ The next service bootstrap does not need to implement the full final event famil
 - `shell/open_companion` is now also used by the Electron shell edge to launch `AudioOnsetFinder-main/GUI/pipeline_gui.py` with shared WildAudioWorlds session attach args.
 - `session/attach` currently attaches a second shell snapshot, increments `stateRevision`, and promotes the manifest from `standalone` to `linked` when peer count grows beyond one.
 - `session/detach` now removes a peer snapshot, increments `stateRevision`, and downgrades the manifest back to `standalone` when only one peer remains.
-- `session/get_state`, `session/open_asset`, `session/clear_asset`, `asset/set_revision`, `transport/set_time`, and `transport/set_selection` now run on the persistent service and publish updated manifest-backed session snapshots through the new AudioManager state owner.
+- `session/get_state`, `session/open_asset`, `session/clear_asset`, `asset/set_revision`, `asset/set_dirty_state`, `asset/revision_ready`, `asset/revision_failed`, `transport/set_time`, and `transport/set_selection` now run on the persistent service and publish updated manifest-backed session snapshots through the new AudioManager state owner.
 - Bootstrap-written manifests now sync their initial asset and transport snapshot into the live service, and manifest-backed commands like `session/attach`, `session/detach`, and `shell/open_companion` now keep that service-owned state aligned.
 - AudioOnsetFinder startup now consumes those shared attach args before Qt initialization and calls `session/attach` through the thin bootstrap so the companion joins the linked session during launch.
 - Electron startup now also consumes those shared attach args before the BrowserWindow shows and calls `session/attach` through the thin bootstrap so the companion joins the linked session during launch.
 - Electron now publishes backend-monitor asset open or clear plus playhead and selection snapshots into the persistent service from `3DAudioGraphs-main/frontend/main.cjs`, using renderer-side `audio` transport listeners for prompt play, pause, and seek updates.
-- AudioOnsetFinder now publishes onset-editor asset loads, manual seek changes, playback position changes, and region selection clear or select updates through `AudioOnsetFinder-main/GUI/local_integration_session.py` and `AudioOnsetFinder-main/GUI/onset_editor.py`.
+- AudioOnsetFinder now publishes onset-editor asset loads, manual seek changes, playback position changes, region selection clear or select updates, and first-edit dirty/clean state transitions through `AudioOnsetFinder-main/GUI/local_integration_session.py` and `AudioOnsetFinder-main/GUI/onset_editor.py`.
+- AudioOnsetFinder save completion now republishes the current asset identity and routes save success or failure through `asset/revision_ready` or `asset/revision_failed`, so the canonical lifecycle reflects the real save boundary rather than only local clean-state toggles.
+- Electron now routes recorded-audio import completion plus current-asset backend-call success or failure through the shared revision lifecycle when the finishing job still matches the active canonical asset.
 - Focused Python contract tests now cover `service/bootstrap -> shell/open_companion -> session/attach`, `session/detach`, launch failure, attach failure, and session reuse behavior.
-- Focused Python contract tests now also cover the first AudioManager ownership path for asset, revision, playhead, selection, and asset-clear state inside the persistent service.
+- Focused Python contract tests now also cover the first AudioManager ownership path for asset, revision, dirty-state, playhead, selection, asset-clear state, and revision failed/ready lifecycle state inside the persistent service.
 - Focused shell-edge validation now also covers the onset-editor callback bridge plus Electron syntax checks for the renderer and main-process shell-publish surfaces.
 - Focused shell-edge validation now also covers the shared CLI arg vocabulary, the AudioOnsetFinder startup attach helper, Electron syntax checks, and the frontend production build.
 - The session manifest should be safe to publish even before DataManager exists, but only the bootstrap/service should write it.
@@ -386,7 +388,6 @@ This draft is good enough for the next implementation slice if it supports the f
 
 After this draft, the next implementation work should be:
 
-1. Add event delivery plus canonical shell consumption for transport, asset, and revision updates where request-response polling is no longer sufficient.
-2. Extend AudioManager ownership to dirty-state and coordinated revision-ready switching.
-3. Expand contract and integration coverage around playhead sync, selection sync, revision switching, and companion attach or detach reuse.
-4. Collapse temporary shell-local caches as service-owned read paths become authoritative.
+1. Carry explicit next-revision identity through the remaining revision-producing backend jobs and onset-edit pipelines so `asset/revision_ready` can promote new derived revisions instead of only confirming the current active revision.
+2. Expand contract and integration coverage around playhead sync, selection sync, revision switching, and companion attach or detach reuse.
+3. Collapse temporary shell-local caches as service-owned read paths become authoritative.

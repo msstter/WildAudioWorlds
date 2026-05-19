@@ -455,6 +455,10 @@ Completed Step 8 additions:
 - Bootstrap-written session manifests now sync their initial state into the live persistent service, and manifest-backed commands like `session/attach`, `session/detach`, and `shell/open_companion` now update the daemon's AudioManager state rather than leaving the in-memory service snapshot behind.
 - Both shells now publish real asset and transport mutations into that command surface: Electron publishes backend-monitor asset open or clear plus transport snapshots from the existing renderer bridge, and AudioOnsetFinder publishes onset-editor asset, playhead, and selection changes through the shared session helper.
 - The persistent service now also publishes canonical AudioManager event traffic through `events/poll`, and both shells now consume that read side: AudioOnsetFinder polls and applies canonical asset, playhead, and selection updates through its shared session helper and event pump, and Electron hydrates from `local-integration:get-state`, polls canonical events, and applies remote state without republishing loops.
+- The persistent service now also owns canonical dirty-state plus coordinated `asset/set_dirty_state`, `asset/revision_ready`, and `asset/revision_failed` transitions, keeping the current active revision stable until one explicit ready event promotes the next revision.
+- AudioOnsetFinder now publishes onset-editor dirty or clean transitions into that lifecycle through the shared session helper, and the focused local-integration contract coverage now verifies dirty, failed, and ready revision transitions through the daemon-owned event path.
+- Onset-editor save completion now republishes the current canonical asset identity and routes successful or failed save outcomes through `asset/revision_ready` or `asset/revision_failed` instead of treating save completion as a purely shell-local clean-state change.
+- Electron now routes recorded-audio import completion plus current-asset backend-call success or failure through the same revision lifecycle when the finishing job still matches the active canonical asset, preventing stale job completions from mutating newer session state.
 - Backend analysis request building now uses canonical `session/get_state` snapshots rather than monitor-shaped renderer caches, preserving richer canonical asset metadata and treating Bioacoustics overrides as explicit request options rather than replacement request state.
 - The backend monitor's readiness gating now queries Electron main for canonical readiness instead of treating the pushed monitor snapshot as the source of truth, and the main Electron transport strip now exposes always-visible `LIVE` and `CAM` launchers for the live-source and camera-control workflows.
 - Focused validation now passes for the service-runtime and shell-session contract slices, the canonical onset-editor apply slice, Electron syntax checks across `main.cjs`, `preload.cjs`, `src/main.js`, and `public/backend-call-monitor.js`, and the current frontend production build.
@@ -474,12 +478,11 @@ Exit criteria: both shells consume canonical asset and transport state in real t
 
 ## 8. Recommended Next Execution Order
 
-The original first execution order has already been completed through the baseline, regression, persistent-service, DataManager, AudioManager publish/read slices, canonical backend-request slice, and first cross-app control-surface pass. The next execution order should now be:
+The original first execution order has already been completed through the baseline, regression, persistent-service, DataManager, AudioManager publish/read slices, canonical backend-request slice, first cross-app control-surface pass, the first dirty or ready or failed revision lifecycle slice, and the first producer-completion routing slice. The next execution order should now be:
 
-1. Add service-owned dirty-state, revision-ready, and revision-failed coordination so onset-side and backend-side edits move both shells through one canonical revision lifecycle.
-2. Route onset-editor save or edit completion and backend job completion onto that coordinated revision path instead of shell-local completion handling.
-3. Expand contract and integration coverage around canonical event delivery, live-source transitions, revision switching, companion attach or detach reuse, and superseded jobs.
-4. Decide which backend-monitor and companion-only actions should be promoted into clearer main-shell shortcuts after the merged control-surface audit.
-5. Retire the remaining temporary monitor-shaped and shell-local caches once the service-owned dirty-state and revision path can replace them safely.
+1. Carry explicit next-revision identity through the remaining revision-producing backend jobs and onset-edit pipelines so `revision_ready` can promote newly-derived revisions instead of only confirming the current active revision.
+2. Expand contract and integration coverage around canonical event delivery, live-source transitions, revision switching, companion attach or detach reuse, and superseded jobs.
+3. Decide which backend-monitor and companion-only actions should be promoted into clearer main-shell shortcuts after the merged control-surface audit.
+4. Retire the remaining temporary monitor-shaped and shell-local caches once the service-owned dirty-state and revision path can replace them safely.
 
 This updated sequence keeps momentum on the merge while still protecting the current working bridge and preserving both shells as independently usable entry points.
