@@ -12,8 +12,22 @@ const {
     getBackendErrorMetadataMap,
 } = require('./error_metadata.cjs');
 const {
+    buildRecordedAudioFailure,
+    enrichRecordedAudioFailure,
+    getRecordedAudioErrorMetadata,
+    getRecordedAudioErrorMetadataMap,
+    normalizeRecordedAudioErrorCode,
+} = require('./recorded_audio_errors.cjs');
+const {
     formatBackendFailureForMonitor,
 } = require('./failure_formatter.cjs');
+const {
+    buildBackendLogEventEntry,
+    formatBackendLogEventMessage,
+    getBackendLogEventMetadata,
+    getBackendLogEventMetadataMap,
+    normalizeBackendLogEventCode,
+} = require('./log_events.cjs');
 const {
     enrichBackendLogEntry,
     formatBackendLogForMonitor,
@@ -113,25 +127,35 @@ function buildBackendAnalysisRequest(baseState, runOptions = {}, overrides = {})
 module.exports = {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
     DEFAULT_BACKEND_SAVE_MODE,
+    buildBackendLogEventEntry,
     buildBackendFailure,
     buildBackendAnalysisRequest,
+    buildRecordedAudioFailure,
     enrichBackendLogEntry,
     enrichBackendSaveResult,
     enrichBackendFailure,
+    enrichRecordedAudioFailure,
     evaluateBackendActionReadiness,
     formatBackendFailureForMonitor,
+    formatBackendLogEventMessage,
     formatBackendLogForMonitor,
     getBackendActionMetadataMap,
     getBackendErrorMetadata,
     getBackendErrorMetadataMap,
+    getBackendLogEventMetadata,
+    getBackendLogEventMetadataMap,
     getBackendLogLevelMetadataMap,
     getBackendLogScopeMetadataMap,
     getBackendSaveModeMetadataMap,
+    getRecordedAudioErrorMetadata,
+    getRecordedAudioErrorMetadataMap,
     normalizeBackendAnalysisRequest,
     normalizeBackendAnalysisType,
+    normalizeBackendLogEventCode,
     normalizeBackendLogLevel,
     normalizeBackendLogScope,
     normalizeBackendRequestState,
     normalizeBackendSaveMode,
     normalizeBackendSelectionContract,
+    normalizeRecordedAudioErrorCode,
 };

@@ -109,3 +109,93 @@ assert.deepStrictEqual(enrichedLogEntry.formattedLog, {
         },
     ],
 });
+
+const startedLogEvent = commandContracts.buildBackendLogEventEntry('backend-call-started', {
+    analysisType: 'slice-summary',
+    assetLabel: 'Demo Asset',
+}, {
+    details: {
+        requestId: 'req-123',
+        saveMode: 'json',
+    },
+});
+
+assert.deepStrictEqual(startedLogEvent, {
+    eventCode: 'backend-call-started',
+    scope: 'bridge',
+    level: 'info',
+    message: 'Running slice-summary for Demo Asset.',
+    details: {
+        requestId: 'req-123',
+        saveMode: 'json',
+    },
+});
+
+const failedLogEvent = commandContracts.buildBackendLogEventEntry('backend-call-failed', {
+    failure: {
+        error: 'Backend analysis returned no payload.',
+    },
+});
+
+assert.deepStrictEqual(failedLogEvent, {
+    eventCode: 'backend-call-failed',
+    scope: 'bridge',
+    level: 'error',
+    message: 'Backend analysis returned no payload.',
+    details: null,
+});
+
+const savedRecordedAudioLogEvent = commandContracts.buildBackendLogEventEntry('recorded-audio-saved', {
+    savedAudioPath: '/tmp/demo.wav',
+}, {
+    details: {
+        includeMfcc: true,
+    },
+});
+
+assert.deepStrictEqual(savedRecordedAudioLogEvent, {
+    eventCode: 'recorded-audio-saved',
+    scope: 'recorded-audio',
+    level: 'info',
+    message: 'Saved recorded microphone audio to /tmp/demo.wav.',
+    details: {
+        includeMfcc: true,
+    },
+});
+
+const failedRecordedAudioLogEvent = commandContracts.buildBackendLogEventEntry('recorded-audio-failed', {
+    failure: {
+        error: 'Recorded audio import failed with exit code 1.',
+    },
+});
+
+assert.deepStrictEqual(failedRecordedAudioLogEvent, {
+    eventCode: 'recorded-audio-failed',
+    scope: 'recorded-audio',
+    level: 'error',
+    message: 'Recorded audio import failed with exit code 1.',
+    details: null,
+});
+
+const missingRecordedAudioFailure = commandContracts.buildRecordedAudioFailure('recorded-audio-missing-buffer');
+
+assert.deepStrictEqual(missingRecordedAudioFailure, {
+    ok: false,
+    errorCode: 'recorded-audio-missing-buffer',
+    error: 'Recorded audio import is missing WAV audio data.',
+});
+
+const runnerMissingRecordedAudioFailure = commandContracts.buildRecordedAudioFailure('recorded-audio-runner-missing', {
+    details: {
+        backendRunnerPath: '/tmp/import_recorded_audio.py',
+    },
+});
+
+assert.deepStrictEqual(runnerMissingRecordedAudioFailure, {
+    ok: false,
+    errorCode: 'recorded-audio-runner-missing',
+    error: 'Recorded audio import runner is unavailable.',
+    details: {
+        backendRunnerPath: '/tmp/import_recorded_audio.py',
+    },
+});

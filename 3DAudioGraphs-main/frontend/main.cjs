@@ -7,6 +7,7 @@ const path = require('path');
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
 const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
 const SHARED_SESSION_COMMAND_CONTRACTS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'command_contracts.cjs');
+const SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'recorded_audio_errors.cjs');
 const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
     ? require(SHARED_GRAPH_PATHS_MODULE)
     : {
@@ -14,6 +15,9 @@ const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
         resolveBackendRunnerPath: (frontendDir) => path.join(path.resolve(frontendDir, '..'), 'backend', 'run_selection_analysis.py'),
         resolveRecordedAudioImportRunnerPath: (frontendDir) => path.join(path.resolve(frontendDir, '..'), 'backend', 'import_recorded_audio.py'),
     };
+const sharedRecordedAudioErrors = fs.existsSync(SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE)
+    ? require(SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE)
+    : null;
 const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     ? require(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     : {
@@ -208,6 +212,41 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
         },
         buildBackendFailure(errorCode, overrides = {}) {
             return this.enrichBackendFailure(overrides, { errorCode });
+        },
+        getRecordedAudioErrorMetadataMap() {
+            return sharedRecordedAudioErrors?.getRecordedAudioErrorMetadataMap?.() || {};
+        },
+        getRecordedAudioErrorMetadata(errorCode) {
+            const normalizedErrorCode = typeof errorCode === 'string' && errorCode.trim() !== ''
+                ? errorCode.trim()
+                : 'recorded-audio-import-failed';
+            if (typeof sharedRecordedAudioErrors?.getRecordedAudioErrorMetadata === 'function') {
+                return sharedRecordedAudioErrors.getRecordedAudioErrorMetadata(normalizedErrorCode);
+            }
+            return this.getRecordedAudioErrorMetadataMap()?.[normalizedErrorCode] || {
+                message: normalizedErrorCode,
+            };
+        },
+        enrichRecordedAudioFailure(failurePayload, { errorCode } = {}) {
+            const base = failurePayload && typeof failurePayload === 'object' && !Array.isArray(failurePayload)
+                ? { ...failurePayload }
+                : {};
+            const resolvedErrorCode = typeof (errorCode || base.errorCode) === 'string' && String(errorCode || base.errorCode).trim() !== ''
+                ? String(errorCode || base.errorCode).trim()
+                : 'recorded-audio-import-failed';
+            const metadata = this.getRecordedAudioErrorMetadata(resolvedErrorCode);
+
+            return {
+                ...base,
+                ok: false,
+                errorCode: resolvedErrorCode,
+                error: typeof base.error === 'string' && base.error.trim() !== ''
+                    ? base.error.trim()
+                    : (metadata.message || resolvedErrorCode),
+            };
+        },
+        buildRecordedAudioFailure(errorCode, overrides = {}) {
+            return this.enrichRecordedAudioFailure(overrides, { errorCode });
         },
         evaluateBackendActionReadiness(analysisType, { selection = null, bioacoustics = null } = {}) {
             const actionMetadata = this.getBackendActionMetadataMap?.()[this.normalizeBackendAnalysisType(analysisType)] || null;
@@ -435,10 +474,13 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
     };
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
+    buildBackendLogEventEntry: sessionBuildBackendLogEventEntry,
     buildBackendFailure,
     buildBackendAnalysisRequest,
+    buildRecordedAudioFailure,
     enrichBackendLogEntry: sessionEnrichBackendLogEntry,
     enrichBackendFailure,
+    enrichRecordedAudioFailure,
     enrichBackendSaveResult,
     evaluateBackendActionReadiness,
     formatBackendFailureForMonitor,
@@ -447,6 +489,7 @@ const {
     getBackendErrorMetadata,
     getBackendErrorMetadataMap,
     getBackendSaveModeMetadataMap,
+    getRecordedAudioErrorMetadata,
     isBioacousticsAnalysisType,
     isBioacousticsImportAnalysisType,
     isBioacousticsSyncAnalysisType,
@@ -518,6 +561,59 @@ const enrichBackendLogEntry = typeof sessionEnrichBackendLogEntry === 'function'
                 scope,
                 message,
             }),
+        };
+    };
+
+const buildBackendLogEventEntry = typeof sessionBuildBackendLogEventEntry === 'function'
+    ? sessionBuildBackendLogEventEntry
+    : (eventCode, context = {}, overrides = {}) => {
+        const nextOverrides = overrides && typeof overrides === 'object' && !Array.isArray(overrides)
+            ? { ...overrides }
+            : {};
+        const nextContext = context && typeof context === 'object' && !Array.isArray(context)
+            ? context
+            : {};
+        const defaultEventMap = {
+            'backend-call-started': {
+                scope: 'bridge',
+                level: 'info',
+                message: `Running ${nextContext.analysisType || 'backend action'} for ${nextContext.assetLabel || 'current asset'}.`,
+            },
+            'backend-call-completed-saved': {
+                scope: 'bridge',
+                level: 'info',
+                message: `Completed ${nextContext.analysisType || 'backend action'}. Saved ${nextContext.artifactLabel || 'output'}.`,
+            },
+            'backend-call-completed-unsaved': {
+                scope: 'bridge',
+                level: 'info',
+                message: `Completed ${nextContext.analysisType || 'backend action'}. No file was saved.`,
+            },
+            'backend-call-failed': {
+                scope: 'bridge',
+                level: 'error',
+                message: nextContext.failure?.error || 'Backend analysis failed.',
+            },
+            'backend-call-stderr': {
+                scope: 'backend-stderr',
+                level: 'warn',
+                message: nextContext.stderrText || 'Backend emitted stderr output.',
+            },
+        };
+        const defaultEntry = defaultEventMap[eventCode] || {
+            scope: 'bridge',
+            level: 'info',
+            message: eventCode,
+        };
+
+        return {
+            eventCode,
+            scope: nextOverrides.scope !== undefined ? nextOverrides.scope : defaultEntry.scope,
+            level: nextOverrides.level !== undefined ? nextOverrides.level : defaultEntry.level,
+            message: typeof nextOverrides.message === 'string' && nextOverrides.message.trim() !== ''
+                ? nextOverrides.message.trim()
+                : defaultEntry.message,
+            details: nextOverrides.details !== undefined ? nextOverrides.details : null,
         };
     };
 
@@ -597,6 +693,10 @@ function appendBackendLog({ level = 'info', scope = 'bridge', message = '', deta
     trimBackendCallLogs();
     sendToBackendMonitor('backend-call-monitor:log-appended', entry);
     return entry;
+}
+
+function appendBackendEventLog(eventCode, context = {}, overrides = {}) {
+    return appendBackendLog(buildBackendLogEventEntry(eventCode, context, overrides));
 }
 
 function setBackendCallState(nextState) {
@@ -793,10 +893,8 @@ function runBackendSelectionAnalysis(requestPayload) {
             stderr += text;
             const trimmed = text.trim();
             if (trimmed) {
-                appendBackendLog({
-                    level: 'warn',
-                    scope: 'backend-stderr',
-                    message: trimmed,
+                appendBackendEventLog('backend-call-stderr', {
+                    stderrText: trimmed,
                 });
             }
         });
@@ -874,7 +972,15 @@ function runRecordedAudioImport(requestPayload) {
     return new Promise((resolve, reject) => {
         const backendRunnerPath = resolveRecordedAudioImportRunnerPath();
         if (!fs.existsSync(backendRunnerPath)) {
-            reject(new Error(`Recorded audio import runner not found: ${backendRunnerPath}`));
+            const failure = buildRecordedAudioFailure('recorded-audio-runner-missing', {
+                details: {
+                    backendRunnerPath,
+                },
+            });
+            const error = new Error(failure.error);
+            error.errorCode = failure.errorCode;
+            error.payload = failure;
+            reject(error);
             return;
         }
 
@@ -896,6 +1002,13 @@ function runRecordedAudioImport(requestPayload) {
         });
 
         child.on('error', (error) => {
+            const failure = buildRecordedAudioFailure('recorded-audio-import-failed', {
+                error: error?.message || undefined,
+                stderr,
+            });
+            error.errorCode = failure.errorCode;
+            error.payload = failure;
+            error.stderr = stderr;
             reject(error);
         });
 
@@ -916,14 +1029,21 @@ function runRecordedAudioImport(requestPayload) {
                 return;
             }
 
-            const failure = response || {
-                ok: false,
-                error: `Recorded audio import failed with exit code ${code}.`,
-                stderr,
-                stdout,
-            };
-            const error = new Error(failure.error || 'Recorded audio import failed.');
+            const failure = response?.ok === false
+                ? enrichRecordedAudioFailure(response, {
+                    errorCode: response?.errorCode || 'recorded-audio-import-failed',
+                })
+                : buildRecordedAudioFailure('recorded-audio-import-exit', {
+                    error: `${getRecordedAudioErrorMetadata('recorded-audio-import-exit').message} Exit code ${code}.`,
+                    exitCode: code,
+                    stderr,
+                    stdout,
+                });
+            const error = new Error(failure.error || getRecordedAudioErrorMetadata('recorded-audio-import-failed').message);
             error.payload = failure;
+            error.errorCode = failure.errorCode;
+            error.stderr = stderr;
+            error.stdout = stdout;
             reject(error);
         });
 
@@ -1008,10 +1128,7 @@ ipcMain.handle('backend-call:show-open-dialog', async (event, dialogOptions = {}
 ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
     const audioBuffer = toNodeBuffer(requestPayload?.audioBuffer);
     if (!audioBuffer || audioBuffer.length === 0) {
-        return {
-            ok: false,
-            error: 'Recorded audio import is missing WAV audio data.',
-        };
+        return buildRecordedAudioFailure('recorded-audio-missing-buffer');
     }
 
     const requestedLabel = typeof requestPayload?.assetLabel === 'string'
@@ -1026,10 +1143,9 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
     fs.mkdirSync(sampleAudioDir, { recursive: true });
     fs.writeFileSync(savedAudioPath, audioBuffer);
 
-    appendBackendLog({
-        level: 'info',
-        scope: 'recorded-audio',
-        message: `Saved recorded microphone audio to ${savedAudioPath}.`,
+    appendBackendEventLog('recorded-audio-saved', {
+        savedAudioPath,
+    }, {
         details: {
             includeMfcc: requestPayload?.includeMfcc !== false,
         },
@@ -1043,10 +1159,9 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
             projectRoot,
         });
 
-        appendBackendLog({
-            level: 'info',
-            scope: 'recorded-audio',
-            message: `Imported recorded audio as ${response?.asset?.label || finalStem}.`,
+        appendBackendEventLog('recorded-audio-imported', {
+            assetLabel: response?.asset?.label || finalStem,
+        }, {
             details: {
                 assetId: response?.asset?.id || null,
                 savedAudioPath,
@@ -1054,15 +1169,19 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
         });
         return response;
     } catch (error) {
-        const failure = error?.payload || {
-            ok: false,
-            error: error?.message || 'Recorded audio import failed.',
-        };
-        appendBackendLog({
-            level: 'error',
-            scope: 'recorded-audio',
-            message: failure.error,
-            details: failure.stderr || failure.traceback || null,
+        const failure = error?.payload
+            ? enrichRecordedAudioFailure(error.payload, {
+                errorCode: error?.payload?.errorCode || error?.errorCode || 'recorded-audio-import-failed',
+            })
+            : buildRecordedAudioFailure(error?.errorCode || 'recorded-audio-import-failed', {
+                error: error?.message || undefined,
+                stderr: error?.stderr || '',
+                stdout: error?.stdout || '',
+            });
+        appendBackendEventLog('recorded-audio-failed', {
+            failure,
+        }, {
+            details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
         });
         return failure;
     }
@@ -1091,7 +1210,9 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
 
     if (!requestAsset?.audioUrl) {
         const failure = withFormattedBackendFailure(buildBackendFailure('backend-asset-missing'));
-        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
+        appendBackendEventLog('backend-call-failed', {
+            failure,
+        });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
     }
@@ -1106,7 +1227,9 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         }, {
             errorCode: 'backend-analysis-failed',
         });
-        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
+        appendBackendEventLog('backend-call-failed', {
+            failure,
+        });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
     }
@@ -1127,15 +1250,19 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         const failure = withFormattedBackendFailure(buildBackendFailure('backend-request-build-failed', {
             error: error?.message || undefined,
         }));
-        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error, details: failure.details || null });
+        appendBackendEventLog('backend-call-failed', {
+            failure,
+        }, {
+            details: failure.details || null,
+        });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
     }
 
-    appendBackendLog({
-        level: 'info',
-        scope: 'bridge',
-        message: `Running ${requestPayload.analysisType} for ${requestPayload.asset.label || requestPayload.asset.id || 'current asset'}.`,
+    appendBackendEventLog('backend-call-started', {
+        analysisType: requestPayload.analysisType,
+        assetLabel: requestPayload.asset.label || requestPayload.asset.id || 'current asset',
+    }, {
         details: {
             requestId: requestPayload.callMeta.requestId,
             saveMode: requestPayload.saveOptions.mode,
@@ -1149,10 +1276,9 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             const failure = withFormattedBackendFailure(response, {
                 errorCode: response?.errorCode || 'backend-analysis-failed',
             });
-            appendBackendLog({
-                level: 'error',
-                scope: 'bridge',
-                message: failure.error,
+            appendBackendEventLog('backend-call-failed', {
+                failure,
+            }, {
                 details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
             });
             sendToBackendMonitor('backend-call-monitor:call-failed', failure);
@@ -1165,12 +1291,10 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             ...response,
             saveResult,
         };
-        appendBackendLog({
-            level: 'info',
-            scope: 'bridge',
-            message: saveResult.saved
-                ? `Completed ${requestPayload.analysisType}. Saved ${saveResult.artifactLabel || 'output'}.`
-                : `Completed ${requestPayload.analysisType}. No file was saved.`,
+        appendBackendEventLog(saveResult.saved ? 'backend-call-completed-saved' : 'backend-call-completed-unsaved', {
+            analysisType: requestPayload.analysisType,
+            artifactLabel: saveResult.artifactLabel || 'output',
+        }, {
             details: {
                 requestId: requestPayload.callMeta.requestId,
                 saved: saveResult.saved || false,
@@ -1191,10 +1315,9 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
                 error: error?.message || undefined,
                 stderr: error?.stderr || '',
             }));
-        appendBackendLog({
-            level: 'error',
-            scope: 'bridge',
-            message: failure.error,
+        appendBackendEventLog('backend-call-failed', {
+            failure,
+        }, {
             details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
         });
         sendToBackendMonitor('backend-call-monitor:call-failed', failure);

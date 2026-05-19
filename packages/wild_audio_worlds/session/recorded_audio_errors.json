@@ -1,0 +1,16 @@
+{
+  "errors": {
+    "recorded-audio-missing-buffer": {
+      "message": "Recorded audio import is missing WAV audio data."
+    },
+    "recorded-audio-runner-missing": {
+      "message": "Recorded audio import runner is unavailable."
+    },
+    "recorded-audio-import-failed": {
+      "message": "Recorded audio import failed."
+    },
+    "recorded-audio-import-exit": {
+      "message": "Recorded audio import exited unexpectedly."
+    }
+  }
+}

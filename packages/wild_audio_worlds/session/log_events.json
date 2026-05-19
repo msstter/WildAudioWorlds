@@ -1,0 +1,47 @@
+{
+  "events": {
+    "backend-call-started": {
+      "scope": "bridge",
+      "level": "info",
+      "messageTemplate": "Running {analysisType} for {assetLabel}."
+    },
+    "backend-call-completed-saved": {
+      "scope": "bridge",
+      "level": "info",
+      "messageTemplate": "Completed {analysisType}. Saved {artifactLabel}."
+    },
+    "backend-call-completed-unsaved": {
+      "scope": "bridge",
+      "level": "info",
+      "messageTemplate": "Completed {analysisType}. No file was saved."
+    },
+    "backend-call-failed": {
+      "scope": "bridge",
+      "level": "error",
+      "messagePath": "failure.error",
+      "fallbackMessage": "Backend analysis failed."
+    },
+    "backend-call-stderr": {
+      "scope": "backend-stderr",
+      "level": "warn",
+      "messagePath": "stderrText",
+      "fallbackMessage": "Backend emitted stderr output."
+    },
+    "recorded-audio-saved": {
+      "scope": "recorded-audio",
+      "level": "info",
+      "messageTemplate": "Saved recorded microphone audio to {savedAudioPath}."
+    },
+    "recorded-audio-imported": {
+      "scope": "recorded-audio",
+      "level": "info",
+      "messageTemplate": "Imported recorded audio as {assetLabel}."
+    },
+    "recorded-audio-failed": {
+      "scope": "recorded-audio",
+      "level": "error",
+      "messagePath": "failure.error",
+      "fallbackMessage": "Recorded audio import failed."
+    }
+  }
+}
