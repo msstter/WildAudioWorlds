@@ -2501,6 +2501,24 @@ const openBackendCallMonitor = async () => {
     }
 };
 
+const openAudioOnsetFinderCompanion = async () => {
+    if (!backendCallMonitorIpc) return false;
+    syncBackendCallMonitorState();
+    try {
+        const response = await backendCallMonitorIpc.invoke('shell:open-companion', {
+            targetShell: 'audio-onset-finder',
+        });
+        if (response?.ok === false) {
+            throw new Error(response?.error || 'Failed to open the AudioOnsetFinder companion shell.');
+        }
+        return true;
+    } catch (error) {
+        console.error('Failed to open AudioOnsetFinder companion shell:', error);
+        window.alert(error?.message || 'Failed to open the AudioOnsetFinder companion shell.');
+        return false;
+    }
+};
+
 if (backendCallMonitorIpc?.on) {
     backendCallMonitorIpc.on('backend-call:completed', (_event, response) => {
         applyImportedBioacousticsWorkbookResult(response);
@@ -3731,6 +3749,7 @@ function buildAcademicAxes(bounds) {
 // AUDIO & UI SETUP
 // ==========================================
 const backendCallBtn = document.getElementById('backend-call-btn');
+const openCompanionBtn = document.getElementById('open-companion-btn');
 const playBtn = document.getElementById('play-btn');
 const restartBtn = document.getElementById('restart-btn');
 const speedBtn = document.getElementById('speed-btn');
@@ -3751,6 +3770,17 @@ if (backendCallBtn) {
     } else {
         backendCallBtn.addEventListener('click', () => {
             openBackendCallMonitor();
+        });
+    }
+}
+
+if (openCompanionBtn) {
+    if (!backendCallMonitorIpc) {
+        openCompanionBtn.disabled = true;
+        openCompanionBtn.title = 'Companion shell launch is available only inside the Electron app shell.';
+    } else {
+        openCompanionBtn.addEventListener('click', () => {
+            void openAudioOnsetFinderCompanion();
         });
     }
 }

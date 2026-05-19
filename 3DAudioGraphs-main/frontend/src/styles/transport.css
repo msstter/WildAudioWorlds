@@ -22,6 +22,7 @@
 }
 
 #backend-call-btn,
+#open-companion-btn,
 #restart-btn,
 #play-btn,
 #speed-btn,
@@ -40,11 +41,20 @@
   background: #9cc8ff;
 }
 
+#open-companion-btn {
+  background: #ffd38a;
+}
+
 #play-btn {
   background: #00ffcc;
 }
 
 #backend-call-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+#open-companion-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }

@@ -141,9 +141,14 @@ def build_session_manifest(
         existing_peers=_list_or_empty(existing.get("peers")),
         now=now,
     )
-    mode = _text_or_empty(session.get("mode")) or _text_or_empty(existing.get("mode"))
-    if not mode:
-        mode = "linked" if len(peers) > 1 else DEFAULT_SESSION_MODE
+    requested_mode = _text_or_empty(session.get("mode"))
+    existing_mode = _text_or_empty(existing.get("mode"))
+    if requested_mode:
+        mode = requested_mode
+    elif len(peers) > 1:
+        mode = "linked"
+    else:
+        mode = existing_mode or DEFAULT_SESSION_MODE
 
     manifest = {
         "schemaVersion": _text_or_empty(session.get("schemaVersion")) or _text_or_empty(existing.get("schemaVersion")) or DEFAULT_SESSION_SCHEMA_VERSION,

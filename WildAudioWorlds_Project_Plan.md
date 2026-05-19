@@ -26,10 +26,13 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - The `session/` package now owns the first shared request contracts, selection normalization, analysis metadata, readiness metadata, result metadata, backend failure metadata, backend failure formatting, log metadata, log event templates, recorded-audio log events, and recorded-audio error metadata.
 - The backend-call monitor now renders shared failure and log view-models produced in Electron main rather than inventing those monitor-facing structures locally.
 - A first standalone-shell versus linked-session attach contract draft now exists in `docs/session_attach_contract.md`, including the first session manifest, launch payload, and attach payload draft.
-- A thin stdio local integration bootstrap now exists in `services/local_integration/bootstrap_service.py`, publishes the first session manifests under `data/sessions/`, and already hosts the current backend-call and recorded-audio compatibility commands.
+- A thin stdio local integration bootstrap now exists in `services/local_integration/bootstrap_service.py`, publishes the first session manifests under `data/sessions/`, hosts the current backend-call and recorded-audio compatibility commands, and now also accepts explicit `shell/open_companion` and `session/attach` commands.
 - The Electron bridge now routes its backend-call and recorded-audio command execution through that bootstrap instead of directly orchestrating runner scripts in shell-local bridge code.
-- The project is effectively late Step 4 / mid-Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, and the first bootstrap path now exist, but linked-session attach flows, DataManager, and AudioManager are still not implemented.
-- The most important next move is to add linked-session checks and extend the bootstrap from compatibility command hosting into explicit attach/open-companion flows.
+- The first linked-session contract checks now cover `service/bootstrap`, `shell/open_companion`, and `session/attach` manifest revision updates, including standalone-to-linked promotion when a second peer attaches.
+- The first real shell edge now exists from Electron into AudioOnsetFinder: the 3DAudioGraphs toolbar requests `shell/open_companion`, launches `pipeline_gui.py` with shared attach args, and AudioOnsetFinder startup joins the shared session through `session/attach` before the GUI shows.
+- That first shell-edge slice has also been validated with focused Python contract tests, a CJS smoke test, Electron syntax checks, and a frontend production build.
+- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open command handlers, and the first real shell edge now exist, but reverse-direction shell launch, `session/detach`, DataManager, and AudioManager are still not implemented.
+- The most important next move is to add the reverse shell edge and `session/detach`, then move manifest/write ownership toward DataManager.
 
 ## 2. Current Baseline
 
@@ -382,11 +385,13 @@ Completed Step 5 prep:
 - The first manifest fields for asset ID, revision ID, originating shell, launch context, playhead, selection window, peer snapshots, and service endpoint discovery are now drafted.
 - A thin stdio bootstrap now exists in `services/local_integration/bootstrap_service.py` and publishes session manifests while hosting the current backend-call and recorded-audio compatibility commands.
 - The current Electron bridge already routes those compatibility commands through the bootstrap.
+- The bootstrap now also accepts explicit `shell/open_companion` and `session/attach` requests and has focused contract coverage for manifest revision updates across bootstrap, open-companion, and attach flows.
+- The first real shell edge now uses those commands: Electron can request companion launch through the bootstrap, spawn AudioOnsetFinder with shared session attach args, and AudioOnsetFinder startup attaches back into the linked session before Qt finishes booting.
 
 Remaining Step 5 targets:
 
-- Add the first linked-session smoke or contract checks around manifest publication and session bootstrap.
-- Extend the bootstrap into explicit `session/attach` and `shell/open_companion` flows.
+- Extend the reverse shell edge so AudioOnsetFinder can launch or reopen the Electron companion into the same shared session.
+- Extend the bootstrap into explicit `session/detach` flow.
 - Keep the first implementation thin and compatibility-oriented so both shells remain independently launchable while the shared service path is introduced.
 
 Exit criteria: either shell can start alone, and one shell can launch the other into the same session without bypassing shared services.
@@ -434,9 +439,10 @@ Exit criteria: moving the playhead in either view updates the other in real time
 
 The original first execution order has already been completed through the baseline, regression, and first shared-package extraction work. The next execution order should now be:
 
-1. Add the first linked-session smoke or contract checks around session bootstrap, manifest publication, and session revision updates.
-2. Extend the bootstrap into explicit `session/attach` and `shell/open_companion` flows while keeping standalone mode stable.
-3. Start the first DataManager extraction around manifest ownership, mutable asset publication, revision-safe writes, and path authority.
-4. Only after those pieces are stable, begin AudioManager session authority for playhead, selection, and revision synchronization.
+1. Extend the reverse shell edge so AudioOnsetFinder can launch or reopen the Electron companion into the same shared session.
+2. Extend the bootstrap into explicit `session/detach` flow before multi-peer shell lifecycle work expands.
+3. Add the next linked-session acceptance checks around shell-edge launch failures, companion attach failures, and session reuse.
+4. Start the first DataManager extraction around manifest ownership, mutable asset publication, revision-safe writes, and path authority.
+5. Only after those pieces are stable, begin AudioManager session authority for playhead, selection, and revision synchronization.
 
 This updated sequence keeps momentum on the merge while still protecting the current working bridge and preserving both shells as independently usable entry points.

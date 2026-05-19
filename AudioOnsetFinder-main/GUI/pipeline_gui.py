@@ -7,6 +7,18 @@ from PyQt6.QtWidgets import QApplication, QMainWindow
 
 
 try:
+	from local_integration_session import (
+		attach_to_local_integration_session,
+		consume_local_integration_launch_args,
+	)
+except ImportError:
+	from GUI.local_integration_session import (
+		attach_to_local_integration_session,
+		consume_local_integration_launch_args,
+	)
+
+
+try:
 	from pipeline_bootstrap import (
 		CONFIG_PATH,
 		DEFAULT_PYTHON,
@@ -380,8 +392,19 @@ class MainWindow(QMainWindow):
 		self._runtime.sync_autoset_from_current_values()
 
 
-def main() -> int:
-	app = QApplication.instance() or QApplication(sys.argv)
+def main(argv: list[str] | None = None) -> int:
+	argv_values = list(sys.argv if argv is None else argv)
+	attach_request, qt_argv = consume_local_integration_launch_args(argv_values)
+	if argv is None:
+		sys.argv[:] = qt_argv
+
+	if attach_request:
+		try:
+			attach_to_local_integration_session(attach_request)
+		except Exception as error:
+			print(f"Warning: failed to attach AudioOnsetFinder to the shared WildAudioWorlds session. {error}", file=sys.stderr)
+
+	app = QApplication.instance() or QApplication(qt_argv)
 	apply_qt_application_theme(app)
 	ensure_qt_application_font()
 	if ICON_PATH:

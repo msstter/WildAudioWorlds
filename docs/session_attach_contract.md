@@ -12,15 +12,16 @@ Current implemented scope:
 - `service/bootstrap`
 - `backend-call/run`
 - `recorded-audio/import`
+- `session/attach`
+- `shell/open_companion`
 
 Current non-implemented scope from this draft:
 
-- explicit `session/attach`
 - explicit `session/detach`
-- explicit `shell/open_companion`
 - linked-session multi-peer attach behavior
+- reverse-direction shell-edge launch from AudioOnsetFinder into Electron
 
-That means this document is now partly implemented: the manifest draft and bootstrap path are live, but the cross-shell attach/open flows are still the next Step 5 extension.
+That means this document is now partly implemented: the manifest draft, bootstrap path, first open-companion launch-intent flow, first attach flow, and the first Electron-to-AudioOnsetFinder shell edge are live, but detach behavior and reverse-direction shell-edge launch are still the next Step 5 extension.
 
 ## Purpose
 
@@ -337,7 +338,16 @@ The next service bootstrap does not need to implement the full final event famil
 
 - The first integration service bootstrap should accept this draft as the source of truth for attach/open payloads.
 - The current Electron bridge should be able to route backend-call and recorded-audio commands through that bootstrap without changing user-visible behavior.
-- AudioOnsetFinder does not need to attach immediately in the first bootstrap slice, but its shell identity and launch expectations should already be represented in the contract.
+- AudioOnsetFinder now attaches on companion startup in the first shell-edge slice, but reverse-direction Electron launch and broader shell lifecycle behavior still remain outside this draft's implemented scope.
+
+## Current Thin Implementation Notes
+
+- `shell/open_companion` currently records companion-launch intent in the manifest, updates `launchContext.requestedCompanion` and `launchContext.requestedByShellId`, and returns the current service/session descriptor.
+- `shell/open_companion` is now also used by the Electron shell edge to launch `AudioOnsetFinder-main/GUI/pipeline_gui.py` with shared WildAudioWorlds session attach args.
+- `session/attach` currently attaches a second shell snapshot, increments `stateRevision`, and promotes the manifest from `standalone` to `linked` when peer count grows beyond one.
+- AudioOnsetFinder startup now consumes those shared attach args before Qt initialization and calls `session/attach` through the thin bootstrap so the companion joins the linked session during launch.
+- Focused Python contract tests now cover `service/bootstrap -> shell/open_companion -> session/attach` and assert manifest revision updates `1 -> 2 -> 3`.
+- Focused shell-edge validation now also covers the shared CLI arg vocabulary, the AudioOnsetFinder startup attach helper, Electron syntax checks, and the frontend production build.
 - The session manifest should be safe to publish even before DataManager exists, but only the bootstrap/service should write it.
 - Companion attach failures must return structured failures while leaving the host shell fully usable.
 

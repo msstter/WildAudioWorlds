@@ -102,3 +102,34 @@ def test_save_and_reload_session_manifest_increments_state_revision(tmp_path):
             "activeRevisionId": "rev-0007",
         },
     }
+
+
+def test_build_session_manifest_promotes_to_linked_when_new_peer_attaches():
+    initial_manifest = build_session_manifest({
+        "sessionId": "linked-session-demo",
+        "hostShell": {
+            "shellId": "shell-aof-001",
+            "shellType": "audio-onset-finder",
+        },
+        "launchContext": {
+            "originatingShell": "audio-onset-finder",
+            "launchReason": "service-bootstrap",
+        },
+    })
+
+    linked_manifest = build_session_manifest({
+        "sessionId": "linked-session-demo",
+        "peers": [{
+            "shellId": "shell-graph-001",
+            "shellType": "audio-graphs",
+            "status": "attached",
+        }],
+    }, existing_manifest=initial_manifest)
+
+    assert linked_manifest["sessionId"] == "linked-session-demo"
+    assert linked_manifest["mode"] == "linked"
+    assert linked_manifest["stateRevision"] == 2
+    assert {peer["shellId"] for peer in linked_manifest["peers"]} == {
+        "shell-aof-001",
+        "shell-graph-001",
+    }

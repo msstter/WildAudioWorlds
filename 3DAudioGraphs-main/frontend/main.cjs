@@ -7,8 +7,11 @@ const path = require('path');
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
 const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
 const SHARED_SESSION_COMMAND_CONTRACTS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'command_contracts.cjs');
+const SHARED_SESSION_SHELL_LAUNCH_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'shell_launch.cjs');
 const SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'session', 'recorded_audio_errors.cjs');
 const LOCAL_INTEGRATION_BOOTSTRAP_MODULE = path.resolve(__dirname, '..', '..', 'services', 'local_integration', 'bootstrap_service.py');
+const AUDIO_ONSET_FINDER_PROJECT_ROOT = path.resolve(__dirname, '..', '..', 'AudioOnsetFinder-main');
+const AUDIO_ONSET_FINDER_PIPELINE_GUI = path.join(AUDIO_ONSET_FINDER_PROJECT_ROOT, 'GUI', 'pipeline_gui.py');
 const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
     ? require(SHARED_GRAPH_PATHS_MODULE)
     : {
@@ -19,6 +22,28 @@ const graphBackendPaths = fs.existsSync(SHARED_GRAPH_PATHS_MODULE)
 const sharedRecordedAudioErrors = fs.existsSync(SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE)
     ? require(SHARED_SESSION_RECORDED_AUDIO_ERRORS_MODULE)
     : null;
+const sharedShellLaunch = fs.existsSync(SHARED_SESSION_SHELL_LAUNCH_MODULE)
+    ? require(SHARED_SESSION_SHELL_LAUNCH_MODULE)
+    : {
+        buildShellLaunchCliArgs(launchRequest = {}) {
+            const request = launchRequest && typeof launchRequest === 'object' && !Array.isArray(launchRequest)
+                ? launchRequest
+                : {};
+            const cliArgs = [];
+            const addFlag = (flag, value) => {
+                const normalizedValue = typeof value === 'string' ? value.trim() : '';
+                if (normalizedValue) {
+                    cliArgs.push(flag, normalizedValue);
+                }
+            };
+            addFlag('--waw-session-id', request.sessionId);
+            addFlag('--waw-manifest-path', request.manifestPath);
+            addFlag('--waw-service-endpoint', request.serviceEndpoint);
+            addFlag('--waw-origin-shell', request.originatingShell);
+            addFlag('--waw-launch-reason', request.launchReason);
+            return cliArgs;
+        },
+    };
 const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     ? require(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     : {
@@ -628,6 +653,7 @@ let localIntegrationSessionCache = null;
 const BACKEND_CALL_LOG_LIMIT = 200;
 const LOCAL_INTEGRATION_HOST_SHELL_ID = `shell-graph-${randomUUID()}`;
 const LOCAL_INTEGRATION_HOST_STARTED_AT = new Date().toISOString();
+const DEFAULT_COMPANION_SHELL = 'audio-onset-finder';
 
 // Use dedicated GPU more aggressively.
 app.commandLine.appendSwitch('force_high_performance_gpu');
@@ -840,6 +866,10 @@ function resolveLocalIntegrationBootstrapPath() {
     return LOCAL_INTEGRATION_BOOTSTRAP_MODULE;
 }
 
+function resolveAudioOnsetFinderEntryPath() {
+    return AUDIO_ONSET_FINDER_PIPELINE_GUI;
+}
+
 function sanitizeFileComponent(value, fallback = 'recorded-audio') {
     const sanitized = String(value || '')
         .trim()
@@ -1023,6 +1053,120 @@ function runLocalIntegrationServiceCommand(command, payload, {
     });
 }
 
+function buildOpenCompanionRequestPayload({
+    targetShell = DEFAULT_COMPANION_SHELL,
+    asset = null,
+    selection = null,
+} = {}) {
+    const sessionPayload = buildLocalIntegrationSessionPayload({
+        launchReason: 'open-companion',
+        asset,
+        selection,
+    });
+
+    return {
+        sessionId: sessionPayload.sessionId || localIntegrationSessionCache?.sessionId || '',
+        originShell: sessionPayload.hostShell,
+        targetShell,
+        asset: sessionPayload.asset,
+        transportState: sessionPayload.transportState,
+        launchContext: {
+            ...sessionPayload.launchContext,
+            launchReason: 'open-companion',
+            requestedCompanion: targetShell,
+            requestedByShellId: sessionPayload.hostShell?.shellId || LOCAL_INTEGRATION_HOST_SHELL_ID,
+        },
+    };
+}
+
+function launchDetachedPythonProcess(command, args, {
+    cwd,
+} = {}) {
+    return new Promise((resolve, reject) => {
+        const child = spawn(command, args, {
+            cwd,
+            env: buildBackendPythonEnv(command),
+            detached: true,
+            stdio: 'ignore',
+        });
+
+        child.once('error', (error) => {
+            reject(error);
+        });
+
+        child.once('spawn', () => {
+            child.unref();
+            resolve({
+                pid: child.pid || null,
+            });
+        });
+    });
+}
+
+async function launchCompanionShellProcess(targetShell, openResponse) {
+    if (targetShell !== 'audio-onset-finder') {
+        throw new Error(`Unsupported companion shell target: ${targetShell}`);
+    }
+
+    const entryPath = resolveAudioOnsetFinderEntryPath();
+    if (!fs.existsSync(entryPath)) {
+        throw new Error(`AudioOnsetFinder entrypoint not found: ${entryPath}`);
+    }
+
+    const pythonCommand = resolveBackendPythonCommand();
+    const launchArgs = sharedShellLaunch.buildShellLaunchCliArgs({
+        sessionId: openResponse?.sessionId || openResponse?.session?.sessionId || localIntegrationSessionCache?.sessionId || '',
+        manifestPath: openResponse?.manifestPath || localIntegrationSessionCache?.manifestPath || '',
+        serviceEndpoint: openResponse?.service?.endpoint || '',
+        originatingShell: 'audio-graphs',
+        launchReason: 'open-companion',
+    });
+    const launchedProcess = await launchDetachedPythonProcess(pythonCommand, [entryPath, ...launchArgs], {
+        cwd: AUDIO_ONSET_FINDER_PROJECT_ROOT,
+    });
+
+    return {
+        targetShell,
+        entryPath,
+        pid: launchedProcess.pid,
+    };
+}
+
+async function openCompanionShell(requestPayload = {}) {
+    const targetShell = typeof requestPayload?.targetShell === 'string' && requestPayload.targetShell.trim() !== ''
+        ? requestPayload.targetShell.trim()
+        : DEFAULT_COMPANION_SHELL;
+    const asset = requestPayload?.asset && typeof requestPayload.asset === 'object' && !Array.isArray(requestPayload.asset)
+        ? requestPayload.asset
+        : null;
+    const selection = requestPayload?.selection && typeof requestPayload.selection === 'object' && !Array.isArray(requestPayload.selection)
+        ? requestPayload.selection
+        : null;
+
+    await ensureLocalIntegrationSession({
+        launchReason: 'open-companion-bootstrap',
+        asset,
+        selection,
+    });
+
+    const openResponse = await runLocalIntegrationServiceCommand('shell/open_companion', buildOpenCompanionRequestPayload({
+        targetShell,
+        asset,
+        selection,
+    }), {
+        launchReason: 'open-companion',
+        asset,
+        selection,
+    });
+
+    const launchedProcess = await launchCompanionShellProcess(targetShell, openResponse);
+    return {
+        ...openResponse,
+        ok: true,
+        launchedProcess,
+    };
+}
+
 async function ensureLocalIntegrationSession({
     launchReason = 'service-bootstrap',
     asset = null,
@@ -1141,6 +1285,17 @@ function createBackendMonitorWindow() {
 ipcMain.handle('backend-call-monitor:open', async () => {
     createBackendMonitorWindow();
     return { ok: true };
+});
+
+ipcMain.handle('shell:open-companion', async (_event, requestPayload = {}) => {
+    try {
+        return await openCompanionShell(requestPayload);
+    } catch (error) {
+        return {
+            ok: false,
+            error: error?.message || 'Failed to open companion shell.',
+        };
+    }
 });
 
 ipcMain.handle('backend-call:get-action-metadata', async () => {

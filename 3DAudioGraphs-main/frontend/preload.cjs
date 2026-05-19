@@ -6,6 +6,7 @@ const invokeChannels = new Set([
     'recorded-audio:import',
     'backend-call:run',
     'backend-call-monitor:open',
+    'shell:open-companion',
 ]);
 
 const sendChannels = new Set([

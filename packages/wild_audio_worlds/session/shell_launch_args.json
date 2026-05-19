@@ -1,0 +1,7 @@
+{
+  "sessionId": "--waw-session-id",
+  "manifestPath": "--waw-manifest-path",
+  "serviceEndpoint": "--waw-service-endpoint",
+  "originatingShell": "--waw-origin-shell",
+  "launchReason": "--waw-launch-reason"
+}

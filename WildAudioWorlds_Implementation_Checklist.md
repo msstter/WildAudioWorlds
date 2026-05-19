@@ -10,6 +10,9 @@ Last updated: 2026-05-19
 - [x] Define the standalone-shell and linked-session attach contract
 - [x] Stand up the local integration service bootstrap path
 - [x] Route the current Electron bridge through the local integration bootstrap for backend-call and recorded-audio commands
+- [x] Add the first linked-session bootstrap and manifest-revision contract checks
+- [x] Extend the bootstrap into explicit `session/attach` and `shell/open_companion` flows
+- [x] Wire the first shell-edge caller through the new `session/attach` and `shell/open_companion` bootstrap commands
 - [ ] Introduce DataManager as the single writer for derived artifacts
 - [ ] Introduce AudioManager as the shared session authority
 
@@ -55,11 +58,12 @@ Last updated: 2026-05-19
 - [x] Validate shared Python and CJS session slices iteratively with smoke tests and syntax checks
 - [x] Validate backend-call monitor rendering against shared failure and log view-models supplied by Electron main
 - [x] Remove remaining recorded-audio failure wording from `frontend/main.cjs` in favor of shared session metadata
+- [x] Validate the first Electron-to-AudioOnsetFinder shared-session shell-edge path with focused Python/CJS tests, Electron syntax checks, and a frontend production build
 
 ## Immediate Next
 
-- [ ] Add the first linked-session smoke or contract checks before any PyQt/Electron attach rewiring
-- [ ] Extend the thin bootstrap from command-hosting compatibility wrappers into explicit `session/attach` and `shell/open_companion` flows
+- [ ] Extend the reverse shell edge so AudioOnsetFinder can launch the Electron companion into the same shared session
+- [ ] Extend the thin bootstrap from explicit attach/open flows into `session/detach`
 - [ ] Start the first DataManager extraction around mutable asset publication, manifest ownership, and revision-safe writes
 
 ## Newly Completed Step 5 Prep
@@ -75,6 +79,19 @@ Last updated: 2026-05-19
 - [x] Route the Electron backend-call and recorded-audio compatibility commands through the bootstrap instead of spawning runner scripts directly in shell-local bridge code
 - [x] Validate the bootstrap with Python contract tests, `main.cjs` syntax checks, direct `service/bootstrap` smoke, and direct `backend-call/run` smoke
 
+## Newly Completed Linked-Session Slice
+
+- [x] Add focused Python contract coverage for `bootstrap -> shell/open_companion -> session/attach` manifest revision updates
+- [x] Auto-promote manifests from `standalone` to `linked` when a second peer attaches through the shared manifest helper
+- [x] Add thin bootstrap handlers for explicit `shell/open_companion` and `session/attach` commands without reopening shell-local orchestration
+
+## Newly Completed Shell-Edge Slice
+
+- [x] Add shared shell-launch CLI arg helpers so companion-launch flags stay aligned between Electron and PyQt startup paths
+- [x] Wire the Electron toolbar shell edge through `shell/open_companion` and launch AudioOnsetFinder with shared session attach args
+- [x] Wire AudioOnsetFinder startup through `session/attach` so a launched companion joins the existing shared session before the GUI shows
+- [x] Validate the new shell-edge path with focused Python contract tests, a CJS smoke test, Electron syntax checks, and a frontend production build
+
 ## Notes
 
 - Root repo path: `/Users/mh295/WildAudioWorlds`
@@ -83,5 +100,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, Step 5 now has both a contract draft and a working thin bootstrap, and the next major execution slice is linked-session attach checks plus the first explicit attach/open-companion flows
-- The highest-leverage next move is to validate linked-session behavior and then push manifest/write ownership toward DataManager instead of adding new shell-local orchestration
+- Current implementation phase: Step 4 is well underway, and Step 5 now includes a real Electron-to-AudioOnsetFinder shell edge on top of the attach/open-companion bootstrap commands and linked-session revision checks
+- The highest-leverage next move is to add the reverse shell edge plus `session/detach`, then push manifest/write ownership toward DataManager instead of adding new shell-local orchestration
