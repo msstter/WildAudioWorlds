@@ -1,9 +1,11 @@
+import base64
 import json
 import sys
 import wave
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import pytest
 
 
@@ -20,6 +22,7 @@ if str(GRAPH_BACKEND_DIR) not in sys.path:
 
 from main import process_audio_file  # noqa: E402
 from bioacoustics_workbook import sync_workbook_onsets  # noqa: E402
+from import_recorded_audio import import_recorded_audio  # noqa: E402
 from run_selection_analysis import (  # noqa: E402
     _resolve_bio_sync_output_path,
     _save_result,
@@ -221,6 +224,81 @@ def test_data_manager_publishes_backend_call_json_and_wav_exports(tmp_path):
     with wave.open(str(wav_export_path), "rb") as wav_file:
         assert wav_file.getframerate() == 24000
         assert wav_file.getnframes() == 3
+
+
+def test_data_manager_publishes_source_audio_input_and_shared_write_helpers(tmp_path):
+    data_manager = DataManager(tmp_path)
+
+    source_audio_path = data_manager.publish_source_audio_input(
+        b"RIFFRECORDED",
+        stem_hint="Marsh Recording",
+        extension="wav",
+    )
+    text_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review.txt"
+    json_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review.json"
+    csv_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review.csv"
+    audio_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "selection.wav"
+
+    DataManager.write_text_file(text_path, "alpha\nbeta\n")
+    DataManager.write_json_file(json_path, {"ok": True, "count": 2})
+    DataManager.write_csv_dataframe(csv_path, pd.DataFrame({"value": [1, 2]}))
+    DataManager.write_audio_file(audio_path, np.array([0.0, 0.5, -0.5], dtype=np.float32), 16000)
+
+    assert source_audio_path.parent == tmp_path / "data" / "source_audio" / "recorded"
+    assert source_audio_path.suffix == ".wav"
+    assert source_audio_path.read_bytes() == b"RIFFRECORDED"
+    assert source_audio_path.name.startswith("marsh-recording-")
+
+    assert text_path.read_text(encoding="utf-8") == "alpha\nbeta\n"
+    with json_path.open("r", encoding="utf-8") as handle:
+        assert json.load(handle) == {"ok": True, "count": 2}
+    assert csv_path.read_text(encoding="utf-8").splitlines() == ["value", "1", "2"]
+
+    with wave.open(str(audio_path), "rb") as wav_file:
+        assert wav_file.getframerate() == 16000
+        assert wav_file.getnframes() == 3
+
+
+def test_import_recorded_audio_routes_base64_source_publication_through_data_manager(tmp_path, monkeypatch):
+    recorded = {}
+
+    def _fake_process_audio_file(audio_path, *, include_mfcc, display_name, project_root, logger=None):
+        recorded["audioPath"] = Path(audio_path)
+        recorded["includeMfcc"] = include_mfcc
+        recorded["displayName"] = display_name
+        recorded["projectRoot"] = Path(project_root)
+        return {
+            "id": "marsh-recording-wav",
+            "label": display_name,
+            "revisionId": "rev-0001",
+        }
+
+    def _fake_upsert_manifest_entry(manifest_path, manifest_entry):
+        recorded["manifestPath"] = Path(manifest_path)
+        recorded["manifestEntry"] = manifest_entry
+        return [manifest_entry]
+
+    monkeypatch.setattr("import_recorded_audio.process_audio_file", _fake_process_audio_file)
+    monkeypatch.setattr("import_recorded_audio.upsert_manifest_entry", _fake_upsert_manifest_entry)
+
+    result = import_recorded_audio({
+        "audioBufferBase64": base64.b64encode(b"RIFFINTEGRATION").decode("ascii"),
+        "assetLabel": "Marsh Take",
+        "fileStem": "marsh take",
+        "fileExtension": ".wav",
+        "includeMfcc": True,
+        "projectRoot": str(tmp_path),
+    })
+
+    saved_audio_path = Path(result["savedAudioPath"])
+
+    assert saved_audio_path.parent == tmp_path / "data" / "source_audio" / "recorded"
+    assert saved_audio_path.read_bytes() == b"RIFFINTEGRATION"
+    assert recorded["audioPath"] == saved_audio_path
+    assert recorded["displayName"] == "Marsh Take"
+    assert recorded["projectRoot"] == tmp_path
+    assert recorded["manifestPath"] == tmp_path / "frontend" / "public" / "audio_assets_manifest.json"
+    assert recorded["manifestEntry"]["label"] == "Marsh Take"
 
 
 def test_run_selection_analysis_save_result_routes_exports_through_data_manager(tmp_path, monkeypatch):

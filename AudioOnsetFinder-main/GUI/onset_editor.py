@@ -118,6 +118,7 @@ try:
         _save_labels,
         _selection_manifest_filename,
         _summarize_load_selections_error as _summarize_load_selections_error_impl,
+        _write_audio_file,
         _write_selection_manifest,
         _write_focus_regions_json as _write_focus_regions_json_impl,
         _write_onset_layer_settings as _write_onset_layer_settings_impl,
@@ -3741,14 +3742,6 @@ class OnsetEditorPanel(QWidget):
         if seg is None or len(seg) == 0:
             return
 
-        try:
-            import soundfile as sf
-        except ImportError:
-            QMessageBox.critical(
-                self, "Missing Library",
-                "soundfile is required. Install it with: pip install soundfile")
-            return
-
         stem = os.path.splitext(fname)[0]
         polarity = region.get("polarity", "positive").capitalize()
         out_dir = os.path.dirname(self._audio_path)
@@ -3757,8 +3750,12 @@ class OnsetEditorPanel(QWidget):
         out_path = os.path.join(out_dir, out_name)
 
         try:
-            sf.write(out_path, seg, sr)
+            _write_audio_file(out_path, seg, sr)
             self._status_label.setText(f"Exported: {out_name}")
+        except ImportError:
+            QMessageBox.critical(
+                self, "Missing Library",
+                "soundfile is required. Install it with: pip install soundfile")
         except Exception as exc:
             QMessageBox.critical(
                 self, "Export Error",

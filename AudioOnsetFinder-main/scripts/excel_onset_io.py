@@ -15,6 +15,11 @@ import os
 import re
 from typing import Optional
 
+try:
+    from .shared_data_manager import SharedDataManager as _SharedDataManager
+except ImportError:
+    from shared_data_manager import SharedDataManager as _SharedDataManager
+
 
 _DEFAULT_STABLE_TOLERANCE = 0.25
 _SUMMARY_SHEET = "File Summaries"
@@ -33,6 +38,26 @@ _DYAD_COLUMNS = [
     "Rhythm Ratio [r_k]",
     "Stable Rhythm",
 ]
+
+
+def _write_csv_dataframe(output_path: str, dataframe) -> None:
+    if _SharedDataManager is not None:
+        _SharedDataManager.write_csv_dataframe(output_path, dataframe)
+        return
+
+    dataframe.to_csv(output_path, index=False)
+
+
+def _write_workbook_sheets(output_path: str, workbook_sheets: dict[str, object]) -> None:
+    import pandas as pd
+
+    if _SharedDataManager is not None:
+        _SharedDataManager.write_workbook_sheets(output_path, workbook_sheets)
+        return
+
+    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
+        for sheet_name, sheet_df in workbook_sheets.items():
+            sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
 
 
 def parse_onset_string(s: str) -> list[float]:
@@ -473,16 +498,19 @@ def write_recordings_to_workbook(
     if stable_records:
         new_stable_dyads = pd.concat([new_stable_dyads, pd.DataFrame(stable_records)], ignore_index=True)
 
-    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
-        new_summary.to_excel(writer, sheet_name=_SUMMARY_SHEET, index=False)
-        if len(new_dyads) > 0 or existing_dyads is not None or raw_records:
-            new_dyads.to_excel(writer, sheet_name=_DYADS_SHEET, index=False)
-        if len(new_stable_dyads) > 0 or existing_stable_dyads is not None or stable_records:
-            new_stable_dyads.to_excel(writer, sheet_name=_STABLE_DYADS_SHEET, index=False)
-        for sheet_name, sheet_df in all_sheets.items():
-            if sheet_name in (_SUMMARY_SHEET, _DYADS_SHEET, _STABLE_DYADS_SHEET):
-                continue
-            sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
+    workbook_sheets = {
+        _SUMMARY_SHEET: new_summary,
+    }
+    if len(new_dyads) > 0 or existing_dyads is not None or raw_records:
+        workbook_sheets[_DYADS_SHEET] = new_dyads
+    if len(new_stable_dyads) > 0 or existing_stable_dyads is not None or stable_records:
+        workbook_sheets[_STABLE_DYADS_SHEET] = new_stable_dyads
+    for sheet_name, sheet_df in all_sheets.items():
+        if sheet_name in (_SUMMARY_SHEET, _DYADS_SHEET, _STABLE_DYADS_SHEET):
+            continue
+        workbook_sheets[sheet_name] = sheet_df
+
+    _write_workbook_sheets(excel_path, workbook_sheets)
 
     return {
         "path": excel_path,
@@ -680,17 +708,16 @@ def save_onsets_to_excel(
     out = output_path or file_path
 
     if is_csv or os.path.splitext(out)[1].lower() == ".csv":
-        df.to_csv(out, index=False)
+        _write_csv_dataframe(out, df)
     else:
         # For Excel, we need to preserve other sheets
         if os.path.isfile(file_path) and not is_csv:
             _write_excel_preserving_sheets(
                 file_path, out, sheet_name, df)
         else:
-            with pd.ExcelWriter(out, engine="openpyxl") as writer:
-                df.to_excel(writer, sheet_name=(
-                    sheet_name if isinstance(sheet_name, str) else "File Summaries"
-                ), index=False)
+            _write_workbook_sheets(out, {
+                sheet_name if isinstance(sheet_name, str) else "File Summaries": df,
+            })
 
     return {
         "path": out,
@@ -724,9 +751,7 @@ def _write_excel_preserving_sheets(
     all_sheets[target_sheet] = updated_df
 
     # Write all sheets to output
-    with pd.ExcelWriter(output_path, engine="openpyxl") as writer:
-        for sheet_name, sheet_df in all_sheets.items():
-            sheet_df.to_excel(writer, sheet_name=sheet_name, index=False)
+    _write_workbook_sheets(output_path, all_sheets)
 
 
 def combine_onset_columns(
@@ -805,17 +830,15 @@ def combine_onset_columns(
 
     out = output_path or file_path
     if is_csv or os.path.splitext(out)[1].lower() == ".csv":
-        df.to_csv(out, index=False)
+        _write_csv_dataframe(out, df)
     else:
         if os.path.isfile(file_path) and not is_csv:
             _write_excel_preserving_sheets(
                 file_path, out, sheet_name, df)
         else:
-            with pd.ExcelWriter(out, engine="openpyxl") as writer:
-                df.to_excel(writer, sheet_name=(
-                    sheet_name if isinstance(sheet_name, str)
-                    else "File Summaries"
-                ), index=False)
+            _write_workbook_sheets(out, {
+                sheet_name if isinstance(sheet_name, str) else "File Summaries": df,
+            })
 
     return {
         "path": out,

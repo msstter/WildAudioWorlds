@@ -1474,36 +1474,24 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
         ? requestPayload.assetLabel.trim()
         : '';
     const safeStem = sanitizeFileComponent(requestPayload?.fileStem || requestedLabel, 'recorded-audio');
-    const finalStem = `${safeStem}-${formatFileTimestamp()}`;
     const projectRoot = getProjectRoot();
-    const sampleAudioDir = path.join(projectRoot, 'data', 'sample_audio');
-    const savedAudioPath = path.join(sampleAudioDir, `${finalStem}.wav`);
-
-    fs.mkdirSync(sampleAudioDir, { recursive: true });
-    fs.writeFileSync(savedAudioPath, audioBuffer);
-
-    appendBackendEventLog('recorded-audio-saved', {
-        savedAudioPath,
-    }, {
-        details: {
-            includeMfcc: requestPayload?.includeMfcc !== false,
-        },
-    });
 
     try {
         const response = await runRecordedAudioImport({
-            audioPath: savedAudioPath,
-            assetLabel: requestedLabel || finalStem,
+            audioBufferBase64: audioBuffer.toString('base64'),
+            assetLabel: requestedLabel || safeStem,
+            fileStem: safeStem,
+            fileExtension: '.wav',
             includeMfcc: requestPayload?.includeMfcc !== false,
             projectRoot,
         });
 
         appendBackendEventLog('recorded-audio-imported', {
-            assetLabel: response?.asset?.label || finalStem,
+            assetLabel: response?.asset?.label || safeStem,
         }, {
             details: {
                 assetId: response?.asset?.id || null,
-                savedAudioPath,
+                savedAudioPath: response?.savedAudioPath || null,
             },
         });
         return response;

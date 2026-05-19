@@ -64,10 +64,32 @@ def _write_json_atomic(destination_path: Path, payload: dict[str, Any]) -> None:
     temp_path.replace(destination_path)
 
 
+def _write_bytes_atomic(destination_path: Path, payload: bytes) -> None:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _build_temp_output_path(destination_path)
+    temp_path.write_bytes(payload)
+    temp_path.replace(destination_path)
+
+
+def _write_text_atomic(destination_path: Path, payload: str) -> None:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _build_temp_output_path(destination_path)
+    with temp_path.open("w", encoding="utf-8") as handle:
+        handle.write(payload)
+    temp_path.replace(destination_path)
+
+
 def _build_temp_output_path(destination_path: Path) -> Path:
     if destination_path.suffix:
         return destination_path.with_name(f"{destination_path.stem}.tmp{destination_path.suffix}")
     return destination_path.with_name(f"{destination_path.name}.tmp")
+
+
+def _write_csv_atomic(destination_path: Path, dataframe: pd.DataFrame) -> None:
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _build_temp_output_path(destination_path)
+    dataframe.to_csv(temp_path, index=False)
+    temp_path.replace(destination_path)
 
 
 def _write_wav_pcm16_atomic(destination_path: Path, audio_data: Any, sample_rate: Any) -> None:
@@ -87,6 +109,39 @@ def _write_wav_pcm16_atomic(destination_path: Path, audio_data: Any, sample_rate
     temp_path.replace(destination_path)
 
 
+def _write_audio_atomic(destination_path: Path, audio_data: Any, sample_rate: Any) -> None:
+    import soundfile as sf
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _build_temp_output_path(destination_path)
+    sf.write(str(temp_path), audio_data, max(1, _coerce_int(sample_rate, 22050)))
+    temp_path.replace(destination_path)
+
+
+def _normalize_file_extension(extension: str) -> str:
+    cleaned = _text_or_empty(extension)
+    if not cleaned:
+        return ".bin"
+    return cleaned if cleaned.startswith(".") else f".{cleaned}"
+
+
+def _build_unique_file_path(parent_dir: Path, stem: str, extension: str) -> Path:
+    destination_path = parent_dir / f"{stem}{extension}"
+    if not destination_path.exists():
+        return destination_path
+
+    collision_index = 2
+    while True:
+        candidate_path = parent_dir / f"{stem}-{collision_index:02d}{extension}"
+        if not candidate_path.exists():
+            return candidate_path
+        collision_index += 1
+
+
+def _file_timestamp_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+
+
 class DataManager:
     def __init__(self, project_root: str | Path):
         self.paths: GraphProjectPaths = build_project_paths(project_root)
@@ -95,6 +150,7 @@ class DataManager:
         self.public_assets_dir = Path(self.paths["public_assets_dir"]).resolve()
         self.exports_dir = Path(self.paths["exports_dir"]).resolve()
         self.backend_call_exports_dir = (self.exports_dir / "backend_calls").resolve()
+        self.source_audio_dir = (self.project_root / "data" / "source_audio").resolve()
 
     @staticmethod
     def resolve_project_root_from_manifest_path(manifest_path: str | Path) -> Path:
@@ -207,6 +263,23 @@ class DataManager:
         export_path.parent.mkdir(parents=True, exist_ok=True)
         return export_path
 
+    def publish_source_audio_input(
+        self,
+        audio_bytes: bytes | bytearray | memoryview,
+        *,
+        stem_hint: str,
+        extension: str = ".wav",
+        namespace: str = "recorded",
+    ) -> Path:
+        normalized_extension = _normalize_file_extension(extension)
+        namespace_dir = self.source_audio_dir / _slugify(namespace)
+        namespace_dir.mkdir(parents=True, exist_ok=True)
+
+        destination_stem = f"{_slugify(stem_hint)}-{_file_timestamp_now()}"
+        destination_path = _build_unique_file_path(namespace_dir, destination_stem, normalized_extension)
+        _write_bytes_atomic(destination_path, bytes(audio_bytes))
+        return destination_path
+
     def publish_backend_call_json_export(
         self,
         payload: dict[str, Any],
@@ -241,6 +314,22 @@ class DataManager:
         )
         _write_wav_pcm16_atomic(export_path, audio_data, sample_rate)
         return export_path
+
+    @staticmethod
+    def write_audio_file(output_path: str | Path, audio_data: Any, sample_rate: Any) -> None:
+        _write_audio_atomic(Path(output_path), audio_data, sample_rate)
+
+    @staticmethod
+    def write_csv_dataframe(output_path: str | Path, dataframe: pd.DataFrame) -> None:
+        _write_csv_atomic(Path(output_path), dataframe)
+
+    @staticmethod
+    def write_json_file(output_path: str | Path, payload: dict[str, Any]) -> None:
+        _write_json_atomic(Path(output_path), _mapping_or_empty(payload))
+
+    @staticmethod
+    def write_text_file(output_path: str | Path, text: str) -> None:
+        _write_text_atomic(Path(output_path), str(text))
 
     @staticmethod
     def write_workbook_sheets(output_path: str | Path, workbook_sheets: dict[str, pd.DataFrame]) -> None:

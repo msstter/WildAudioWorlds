@@ -63,6 +63,7 @@ Last updated: 2026-05-19
 - [x] Validate `session/detach` plus linked-session launch-failure, attach-failure, and session-reuse behavior with focused Python contract tests
 - [x] Validate the first DataManager extraction around graph-asset publication, manifest ownership, compatibility helper delegation, and stale manifest-write rejection with focused Python contract tests
 - [x] Validate the next DataManager extraction around backend-call export publication, workbook-write delegation, and non-graph derived artifact path authority with focused Python contract tests
+- [x] Validate the next DataManager extraction around recorded-audio source-input publication plus shared onset writer routing with focused Python tests and Electron syntax checks
 
 ## Immediate Next
 
@@ -83,6 +84,12 @@ Last updated: 2026-05-19
 - [x] Extend DataManager with backend-call JSON/WAV export publication helpers so `run_selection_analysis.py` no longer writes those artifacts directly
 - [x] Route the bioacoustics workbook writer through DataManager so current non-graph derived artifact writes also flow through the shared filesystem authority
 - [x] Move backend-call export path generation under DataManager so fallback XLSX exports and save-result paths stay aligned with the managed export root
+
+## Newly Completed DataManager Source And Onset Writer Slice
+
+- [x] Move `recorded-audio/import` source-input publication behind the Python/DataManager boundary so Electron no longer writes recorded source bytes directly before import
+- [x] Route the shared onset writer layers through DataManager-compatible write helpers so onset workbook, label, transcript, TextGrid, selection-export, and onset-editor persistence writes no longer publish directly when the shared package tree is available
+- [x] Preserve standalone AudioOnsetFinder compatibility by falling back to the legacy local writer behavior when the shared WildAudioWorlds packages are not present
 
 ## Newly Completed Step 5 Prep
 
@@ -131,5 +138,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, focused linked-session acceptance coverage, and DataManager ownership for the current graph compatibility path's derived-artifact writes
-- The highest-leverage next move is to extend DataManager beyond the current graph compatibility path into source-input publication and onset-side derived artifact writes before starting AudioManager
+- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, focused linked-session acceptance coverage, DataManager-owned source-input publication for recorded-audio import, and DataManager-backed shared onset writer routing alongside the graph compatibility path
+- The highest-leverage next move is to finish the remaining standalone onset batch/export writer paths that still publish outside DataManager before starting AudioManager

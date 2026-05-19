@@ -27,6 +27,11 @@ except ImportError:
     _eio = None
     _HAS_EXCEL_IO = False
 
+try:
+    from shared_data_manager import SharedDataManager as _SharedDataManager
+except ImportError:
+    _SharedDataManager = None
+
 
 # Each entry: (action_id, default_key, description, category)
 # category "viewer" entries are handled by audio_viewer's keyPressEvent and
@@ -62,6 +67,42 @@ _HOTKEY_CONFIG_FILE = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
     "onset_editor_hotkeys.json",
 )
+
+
+def _write_text_file(path: str, content: str) -> None:
+    parent_dir = os.path.dirname(path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    if _SharedDataManager is not None:
+        _SharedDataManager.write_text_file(path, content)
+        return
+
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def _write_json_file(path: str, payload: dict) -> None:
+    parent_dir = os.path.dirname(path)
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+
+    if _SharedDataManager is not None:
+        _SharedDataManager.write_json_file(path, payload)
+        return
+
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(payload, handle, indent=2)
+
+
+def _write_audio_file(path: str, audio_data: np.ndarray, sample_rate: int) -> None:
+    if _SharedDataManager is not None:
+        _SharedDataManager.write_audio_file(path, audio_data, sample_rate)
+        return
+
+    import soundfile as sf
+
+    sf.write(path, audio_data, sample_rate)
 
 
 def _load_hotkey_overrides() -> dict[str, str]:
@@ -128,9 +169,11 @@ def _load_labels(path: str) -> list[float]:
 
 def _save_labels(path: str, times: list[float]):
     """Save onset times as an Audacity-format label file."""
-    with open(path, "w") as f:
-        for idx, t in enumerate(sorted(times)):
-            f.write(f"{t:.6f}\t{t:.6f}\tOnsetR_{idx + 1}\n")
+    lines = [
+        f"{time_value:.6f}\t{time_value:.6f}\tOnsetR_{idx + 1}\n"
+        for idx, time_value in enumerate(sorted(times))
+    ]
+    _write_text_file(path, "".join(lines))
 
 
 def _find_label_file(audio_path: str) -> Optional[str]:
@@ -280,8 +323,7 @@ def _write_selection_manifest(
         output_dir,
         _selection_manifest_filename(audio_path, polarity),
     )
-    with open(manifest_path, "w", encoding="utf-8") as handle:
-        json.dump(manifest, handle, indent=2)
+    _write_json_file(manifest_path, manifest)
 
 
 def _build_load_selections_request(
@@ -397,12 +439,13 @@ def _export_selections_audio(
     negative_out_dir: str | None = None,
 ) -> int:
     """Export focus-region selections as WAV clips and write selection manifests."""
-    try:
-        import soundfile as sf
-    except ImportError as exc:
-        raise ImportError(
-            "soundfile is required for WAV export. Install it with: pip install soundfile"
-        ) from exc
+    if _SharedDataManager is None:
+        try:
+            import soundfile as _soundfile  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "soundfile is required for WAV export. Install it with: pip install soundfile"
+            ) from exc
 
     if audio_data is None:
         raise ValueError("No audio data loaded.")
@@ -468,7 +511,7 @@ def _export_selections_audio(
                     number = _next_export_number(target_dir, stem, polarity, layer_suffix)
                     out_name = f"{stem}_{polarity}{number}{layer_suffix}.wav"
                     out_path = os.path.join(target_dir, out_name)
-                    sf.write(out_path, seg, sr)
+                    _write_audio_file(out_path, seg, sr)
                     region_meta = dict(region)
                     region_meta["audio_file"] = out_name
                     region_meta["layer_name"] = layer["name"]
@@ -485,7 +528,7 @@ def _export_selections_audio(
                 concat = np.concatenate([seg for _, _, seg in segments])
                 out_name = f"{stem}_{polarity}_all{layer_suffix}.wav"
                 out_path = os.path.join(target_dir, out_name)
-                sf.write(out_path, concat, sr)
+                _write_audio_file(out_path, concat, sr)
                 manifests[polarity]["files"].append(
                     {
                         "audio_file": out_name,
@@ -520,8 +563,7 @@ def _write_focus_regions_json(folder: str, stem: str, layers: list[dict]) -> Opt
         return None
 
     out_path = os.path.join(folder, f"{stem}_focus_regions.json")
-    with open(out_path, "w", encoding="utf-8") as handle:
-        json.dump(all_regions, handle, indent=2)
+    _write_json_file(out_path, all_regions)
     return out_path
 
 
@@ -544,8 +586,7 @@ def _write_onset_layer_settings(audio_path: str, layers: list[dict]) -> Optional
             "onset_times": [round(float(onset_time), 6) for onset_time in layer.get("onset_times", [])],
         }
         out_path = os.path.join(layers_dir, f"Layer_{index}.json")
-        with open(out_path, "w", encoding="utf-8") as handle:
-            json.dump(layer_data, handle, indent=2)
+        _write_json_file(out_path, layer_data)
 
     return layers_dir
 
@@ -574,5 +615,6 @@ __all__ = [
     "_summarize_load_selections_error",
     "_write_selection_manifest",
     "_write_focus_regions_json",
+    "_write_audio_file",
     "_write_onset_layer_settings",
 ]

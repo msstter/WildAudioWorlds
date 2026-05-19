@@ -4,6 +4,20 @@ from __future__ import annotations
 
 import os
 
+try:
+    from .shared_data_manager import SharedDataManager as _SharedDataManager
+except ImportError:
+    from shared_data_manager import SharedDataManager as _SharedDataManager
+
+
+def _write_text_output(output_path: str, content: str) -> None:
+    if _SharedDataManager is not None:
+        _SharedDataManager.write_text_file(output_path, content)
+        return
+
+    with open(output_path, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
 
 def write_audacity_labels(audio_folder: str, filename: str, onset_times, *, refine_enabled: bool) -> str:
     """Write Audacity label lines for the supplied onset times and return the output path."""
@@ -12,11 +26,11 @@ def write_audacity_labels(audio_folder: str, filename: str, onset_times, *, refi
     precision = 6 if refine_enabled else 4
     tag = "OnsetR" if refine_enabled else "Onset"
 
-    with open(label_path, "w", encoding="utf-8") as handle:
-        for index, onset_time in enumerate(onset_times, start=1):
-            handle.write(
-                f"{onset_time:.{precision}f}\t{onset_time:.{precision}f}\t{tag}_{index}\n"
-            )
+    label_lines = [
+        f"{onset_time:.{precision}f}\t{onset_time:.{precision}f}\t{tag}_{index}\n"
+        for index, onset_time in enumerate(onset_times, start=1)
+    ]
+    _write_text_output(label_path, "".join(label_lines))
 
     return label_path
 
@@ -27,22 +41,25 @@ def write_whisper_transcript_exports(audio_folder: str, filename: str, transcrip
     txt_path = os.path.join(audio_folder, f"{base}_transcript.txt")
     srt_path = os.path.join(audio_folder, f"{base}_transcript.srt")
 
-    with open(txt_path, "w", encoding="utf-8") as handle:
-        for entry in transcript_entries:
-            handle.write(f"[{entry['start']:.3f} - {entry['end']:.3f}]  {entry['word']}\n")
+    transcript_text = "".join(
+        f"[{entry['start']:.3f} - {entry['end']:.3f}]  {entry['word']}\n"
+        for entry in transcript_entries
+    )
+    _write_text_output(txt_path, transcript_text)
 
-    with open(srt_path, "w", encoding="utf-8") as handle:
-        for index, entry in enumerate(transcript_entries, start=1):
-            start_hours, start_rest = divmod(entry["start"], 3600)
-            start_minutes, start_seconds = divmod(start_rest, 60)
-            end_hours, end_rest = divmod(entry["end"], 3600)
-            end_minutes, end_seconds = divmod(end_rest, 60)
-            handle.write(f"{index}\n")
-            handle.write(
-                f"{int(start_hours):02d}:{int(start_minutes):02d}:{start_seconds:06.3f} --> "
-                f"{int(end_hours):02d}:{int(end_minutes):02d}:{end_seconds:06.3f}\n"
-            )
-            handle.write(f"{entry['word']}\n\n")
+    srt_lines = []
+    for index, entry in enumerate(transcript_entries, start=1):
+        start_hours, start_rest = divmod(entry["start"], 3600)
+        start_minutes, start_seconds = divmod(start_rest, 60)
+        end_hours, end_rest = divmod(entry["end"], 3600)
+        end_minutes, end_seconds = divmod(end_rest, 60)
+        srt_lines.append(f"{index}\n")
+        srt_lines.append(
+            f"{int(start_hours):02d}:{int(start_minutes):02d}:{start_seconds:06.3f} --> "
+            f"{int(end_hours):02d}:{int(end_minutes):02d}:{end_seconds:06.3f}\n"
+        )
+        srt_lines.append(f"{entry['word']}\n\n")
+    _write_text_output(srt_path, "".join(srt_lines))
 
     return {
         "txt_path": txt_path,
@@ -114,8 +131,7 @@ def write_praat_textgrid_export(
             tier_lines.append(f"            xmax = {float(end):.6f}")
             tier_lines.append(f'            text = "{word}"')
 
-    with open(textgrid_path, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(tier_lines) + "\n")
+    _write_text_output(textgrid_path, "\n".join(tier_lines) + "\n")
 
     return textgrid_path
 
