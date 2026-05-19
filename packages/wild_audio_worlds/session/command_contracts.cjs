@@ -6,6 +6,23 @@ const {
     normalizeBackendSaveMode,
 } = require('./analysis_types.cjs');
 const {
+    buildBackendFailure,
+    enrichBackendFailure,
+    getBackendErrorMetadata,
+    getBackendErrorMetadataMap,
+} = require('./error_metadata.cjs');
+const {
+    formatBackendFailureForMonitor,
+} = require('./failure_formatter.cjs');
+const {
+    enrichBackendLogEntry,
+    formatBackendLogForMonitor,
+    getBackendLogLevelMetadataMap,
+    getBackendLogScopeMetadataMap,
+    normalizeBackendLogLevel,
+    normalizeBackendLogScope,
+} = require('./log_metadata.cjs');
+const {
     normalizeBackendSelectionContract,
     normalizeReadySelectionForRequest,
 } = require('./selection_contracts.cjs');
@@ -96,13 +113,24 @@ function buildBackendAnalysisRequest(baseState, runOptions = {}, overrides = {})
 module.exports = {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
     DEFAULT_BACKEND_SAVE_MODE,
+    buildBackendFailure,
     buildBackendAnalysisRequest,
+    enrichBackendLogEntry,
     enrichBackendSaveResult,
+    enrichBackendFailure,
     evaluateBackendActionReadiness,
+    formatBackendFailureForMonitor,
+    formatBackendLogForMonitor,
     getBackendActionMetadataMap,
+    getBackendErrorMetadata,
+    getBackendErrorMetadataMap,
+    getBackendLogLevelMetadataMap,
+    getBackendLogScopeMetadataMap,
     getBackendSaveModeMetadataMap,
     normalizeBackendAnalysisRequest,
     normalizeBackendAnalysisType,
+    normalizeBackendLogLevel,
+    normalizeBackendLogScope,
     normalizeBackendRequestState,
     normalizeBackendSaveMode,
     normalizeBackendSelectionContract,

@@ -1,6 +1,6 @@
 # WildAudioWorlds Implementation Checklist
 
-Last updated: 2026-05-18
+Last updated: 2026-05-19
 
 ## Started
 
@@ -50,3 +50,6 @@ Last updated: 2026-05-18
 - First shared selection payload normalizers extracted into `packages/wild_audio_worlds/session/selection_contracts.py` and mirrored by `packages/wild_audio_worlds/session/command_contracts.cjs`
 - JS selection window/range normalizers now run in the Electron bridge before Python, and backend-call-monitor action metadata now comes from the shared analysis-type registry
 - Monitor readiness preconditions and the first save/result labels now come from shared session metadata, with Python save results and Electron logs using the same save-artifact vocabulary
+- The first shared bridge/monitor failure metadata now lives in `packages/wild_audio_worlds/session/error_metadata.*`, with shared error codes/messages flowing through backend failures, the Electron bridge, and the monitor fallback path
+- The backend-call monitor now receives a shared `formattedFailure` view-model from `packages/wild_audio_worlds/session/failure_formatter.cjs`, so failed results render labeled sections for error code, message, stderr/stdout, traceback, and details instead of raw JSON dumps
+- The first shared backend-call log metadata now lives in `packages/wild_audio_worlds/session/log_metadata.*`, with the Electron main process attaching a shared `formattedLog` view-model so the monitor renders scope labels and structured detail sections without importing session CJS directly

@@ -19,6 +19,7 @@ from wild_audio_worlds.session.analysis_types import (
 from wild_audio_worlds.session.command_contracts import (
     parse_backend_analysis_request_json,
 )
+from wild_audio_worlds.session.error_metadata import enrich_backend_failure
 from wild_audio_worlds.session.result_metadata import enrich_backend_save_result
 from wild_audio_worlds.session.selection_contracts import (
     normalize_selection_amplitude_pct_range,
@@ -845,11 +846,10 @@ def main():
         sys.stdout.flush()
         return 0
     except Exception as error:
-        failure = {
-            "ok": False,
+        failure = enrich_backend_failure({
             "error": str(error),
             "traceback": traceback.format_exc(),
-        }
+        }, error_code="backend-analysis-failed")
         sys.stdout.write(json.dumps(failure))
         sys.stdout.flush()
         return 1

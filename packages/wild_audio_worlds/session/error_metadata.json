@@ -1,0 +1,28 @@
+{
+  "errors": {
+    "backend-asset-missing": {
+      "message": "No audio asset is loaded for backend analysis."
+    },
+    "backend-runner-missing": {
+      "message": "Backend runner is unavailable."
+    },
+    "backend-request-build-failed": {
+      "message": "Failed to prepare the backend request payload."
+    },
+    "backend-response-parse-failed": {
+      "message": "Failed to parse backend JSON response."
+    },
+    "backend-analysis-failed": {
+      "message": "Backend analysis failed."
+    },
+    "backend-analysis-exit": {
+      "message": "Backend analysis exited unexpectedly."
+    },
+    "backend-no-payload": {
+      "message": "Backend analysis returned no payload."
+    },
+    "backend-call-invoke-failed": {
+      "message": "Backend call failed."
+    }
+  }
+}

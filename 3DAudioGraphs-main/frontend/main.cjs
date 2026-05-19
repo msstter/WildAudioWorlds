@@ -152,6 +152,63 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                 },
             });
         },
+        getBackendErrorMetadataMap() {
+            return {
+                'backend-asset-missing': {
+                    message: 'No audio asset is loaded for backend analysis.',
+                },
+                'backend-runner-missing': {
+                    message: 'Backend runner is unavailable.',
+                },
+                'backend-request-build-failed': {
+                    message: 'Failed to prepare the backend request payload.',
+                },
+                'backend-response-parse-failed': {
+                    message: 'Failed to parse backend JSON response.',
+                },
+                'backend-analysis-failed': {
+                    message: 'Backend analysis failed.',
+                },
+                'backend-analysis-exit': {
+                    message: 'Backend analysis exited unexpectedly.',
+                },
+                'backend-no-payload': {
+                    message: 'Backend analysis returned no payload.',
+                },
+                'backend-call-invoke-failed': {
+                    message: 'Backend call failed.',
+                },
+            };
+        },
+        getBackendErrorMetadata(errorCode) {
+            const normalizedErrorCode = typeof errorCode === 'string' && errorCode.trim() !== ''
+                ? errorCode.trim()
+                : 'backend-analysis-failed';
+            return this.getBackendErrorMetadataMap()?.[normalizedErrorCode] || {
+                message: normalizedErrorCode,
+            };
+        },
+        enrichBackendFailure(failurePayload, { errorCode } = {}) {
+            const base = failurePayload && typeof failurePayload === 'object' && !Array.isArray(failurePayload)
+                ? { ...failurePayload }
+                : {};
+            const resolvedErrorCode = typeof (errorCode || base.errorCode) === 'string' && String(errorCode || base.errorCode).trim() !== ''
+                ? String(errorCode || base.errorCode).trim()
+                : 'backend-analysis-failed';
+            const metadata = this.getBackendErrorMetadata(resolvedErrorCode);
+
+            return {
+                ...base,
+                ok: false,
+                errorCode: resolvedErrorCode,
+                error: typeof base.error === 'string' && base.error.trim() !== ''
+                    ? base.error.trim()
+                    : (metadata.message || resolvedErrorCode),
+            };
+        },
+        buildBackendFailure(errorCode, overrides = {}) {
+            return this.enrichBackendFailure(overrides, { errorCode });
+        },
         evaluateBackendActionReadiness(analysisType, { selection = null, bioacoustics = null } = {}) {
             const actionMetadata = this.getBackendActionMetadataMap?.()[this.normalizeBackendAnalysisType(analysisType)] || null;
             const readiness = actionMetadata?.readiness || {};
@@ -378,10 +435,17 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
     };
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
+    buildBackendFailure,
     buildBackendAnalysisRequest,
+    enrichBackendLogEntry: sessionEnrichBackendLogEntry,
+    enrichBackendFailure,
     enrichBackendSaveResult,
     evaluateBackendActionReadiness,
+    formatBackendFailureForMonitor,
+    formatBackendLogForMonitor: sessionFormatBackendLogForMonitor,
     getBackendActionMetadataMap,
+    getBackendErrorMetadata,
+    getBackendErrorMetadataMap,
     getBackendSaveModeMetadataMap,
     isBioacousticsAnalysisType,
     isBioacousticsImportAnalysisType,
@@ -390,6 +454,72 @@ const {
     normalizeBackendRequestState,
     normalizeBackendSaveMode,
 } = sessionCommandContracts;
+
+const formatBackendLogForMonitor = typeof sessionFormatBackendLogForMonitor === 'function'
+    ? sessionFormatBackendLogForMonitor
+    : (logEntry = {}) => {
+        const entry = logEntry && typeof logEntry === 'object' && !Array.isArray(logEntry)
+            ? { ...logEntry }
+            : {};
+        const level = typeof entry.level === 'string' && entry.level.trim() !== ''
+            ? entry.level.trim().toLowerCase()
+            : 'info';
+        const scope = typeof entry.scope === 'string' && entry.scope.trim() !== ''
+            ? entry.scope.trim()
+            : 'bridge';
+        const detailSections = typeof entry.details === 'string' && entry.details.trim() !== ''
+            ? [{ key: 'details', label: 'Details', value: entry.details.trim() }]
+            : entry.details && typeof entry.details === 'object' && !Array.isArray(entry.details)
+                ? Object.keys(entry.details).map((fieldKey) => {
+                    const rawValue = entry.details[fieldKey];
+                    const value = typeof rawValue === 'string'
+                        ? rawValue.trim()
+                        : (typeof rawValue === 'number' || typeof rawValue === 'boolean')
+                            ? String(rawValue)
+                            : rawValue && typeof rawValue === 'object'
+                                ? JSON.stringify(rawValue, null, 2)
+                                : '';
+                    return value
+                        ? { key: fieldKey, label: fieldKey, value }
+                        : null;
+                }).filter(Boolean)
+                : [];
+
+        return {
+            kind: 'backend-log',
+            scopeLabel: scope,
+            levelLabel: level.toUpperCase(),
+            detailSections,
+        };
+    };
+
+const enrichBackendLogEntry = typeof sessionEnrichBackendLogEntry === 'function'
+    ? sessionEnrichBackendLogEntry
+    : (logEntry = {}) => {
+        const entry = logEntry && typeof logEntry === 'object' && !Array.isArray(logEntry)
+            ? { ...logEntry }
+            : {};
+        const level = typeof entry.level === 'string' && entry.level.trim() !== ''
+            ? entry.level.trim().toLowerCase()
+            : 'info';
+        const scope = typeof entry.scope === 'string' && entry.scope.trim() !== ''
+            ? entry.scope.trim()
+            : 'bridge';
+        const message = typeof entry.message === 'string' ? entry.message.trim() : '';
+
+        return {
+            ...entry,
+            level,
+            scope,
+            message,
+            formattedLog: formatBackendLogForMonitor({
+                ...entry,
+                level,
+                scope,
+                message,
+            }),
+        };
+    };
 
 let mainWindow;
 let backendMonitorWindow = null;
@@ -454,14 +584,14 @@ function sendToMainWindow(channel, payload) {
 }
 
 function appendBackendLog({ level = 'info', scope = 'bridge', message = '', details = null } = {}) {
-    const entry = {
+    const entry = enrichBackendLogEntry({
         id: randomUUID(),
         timestamp: new Date().toISOString(),
         level,
         scope,
         message,
         details,
-    };
+    });
 
     backendCallLogsCache.push(entry);
     trimBackendCallLogs();
@@ -472,6 +602,20 @@ function appendBackendLog({ level = 'info', scope = 'bridge', message = '', deta
 function setBackendCallState(nextState) {
     backendCallStateCache = nextState && typeof nextState === 'object' ? nextState : null;
     sendToBackendMonitor('backend-call-monitor:state', backendCallStateCache);
+}
+
+function withFormattedBackendFailure(failurePayload, { errorCode } = {}) {
+    const failure = enrichBackendFailure(failurePayload, { errorCode });
+    if (typeof formatBackendFailureForMonitor !== 'function') {
+        return failure;
+    }
+
+    return {
+        ...failure,
+        formattedFailure: formatBackendFailureForMonitor(failure, {
+            errorCode: failure.errorCode,
+        }),
+    };
 }
 
 function resolvePythonEnvironmentRoot(command) {
@@ -619,7 +763,15 @@ function runBackendSelectionAnalysis(requestPayload) {
     return new Promise((resolve, reject) => {
         const backendRunnerPath = resolveBackendRunnerPath();
         if (!fs.existsSync(backendRunnerPath)) {
-            reject(new Error(`Backend runner not found: ${backendRunnerPath}`));
+            const failure = buildBackendFailure('backend-runner-missing', {
+                details: {
+                    backendRunnerPath,
+                },
+            });
+            const error = new Error(failure.error);
+            error.errorCode = failure.errorCode;
+            error.payload = failure;
+            reject(error);
             return;
         }
 
@@ -650,7 +802,13 @@ function runBackendSelectionAnalysis(requestPayload) {
         });
 
         child.on('error', (error) => {
+            const failure = buildBackendFailure('backend-analysis-failed', {
+                error: error?.message || undefined,
+                stderr,
+            });
             error.stderr = stderr;
+            error.errorCode = failure.errorCode;
+            error.payload = failure;
             reject(error);
         });
 
@@ -660,34 +818,51 @@ function runBackendSelectionAnalysis(requestPayload) {
             try {
                 parsed = stdout.trim() ? JSON.parse(stdout) : null;
             } catch (parseError) {
-                parseError.message = `Failed to parse backend JSON response: ${parseError.message}`;
+                const failure = buildBackendFailure('backend-response-parse-failed', {
+                    error: `${getBackendErrorMetadata('backend-response-parse-failed').message} ${parseError.message}`.trim(),
+                    stdout,
+                    stderr,
+                });
+                parseError.message = failure.error;
                 parseError.stdout = stdout;
                 parseError.stderr = stderr;
+                parseError.errorCode = failure.errorCode;
+                parseError.payload = failure;
                 reject(parseError);
                 return;
             }
 
             if (parsed?.ok === false) {
-                const error = new Error(parsed.error || `Backend analysis failed with exit code ${code}.`);
-                error.payload = parsed;
+                const failure = enrichBackendFailure(parsed, {
+                    errorCode: parsed?.errorCode || 'backend-analysis-failed',
+                });
+                const error = new Error(failure.error);
+                error.payload = failure;
+                error.errorCode = failure.errorCode;
                 error.stderr = stderr;
                 reject(error);
                 return;
             }
 
             if (code !== 0 && !parsed) {
-                const error = new Error(`Backend analysis exited with code ${code}.`);
+                const failure = buildBackendFailure('backend-analysis-exit', {
+                    error: `${getBackendErrorMetadata('backend-analysis-exit').message} Exit code ${code}.`,
+                    exitCode: code,
+                    stdout,
+                    stderr,
+                });
+                const error = new Error(failure.error);
+                error.payload = failure;
+                error.errorCode = failure.errorCode;
                 error.stdout = stdout;
                 error.stderr = stderr;
                 reject(error);
                 return;
             }
 
-            resolve(parsed || {
-                ok: false,
-                error: 'Backend analysis returned no payload.',
+            resolve(parsed || buildBackendFailure('backend-no-payload', {
                 stderr,
-            });
+            }));
         });
 
         child.stdin.write(JSON.stringify(requestPayload));
@@ -795,6 +970,7 @@ ipcMain.handle('backend-call:get-action-metadata', async () => {
         ok: true,
         defaultActionType: DEFAULT_BACKEND_ANALYSIS_TYPE,
         actions: getBackendActionMetadataMap(),
+        errors: getBackendErrorMetadataMap(),
         saveModes: getBackendSaveModeMetadataMap(),
     };
 });
@@ -914,10 +1090,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
     const requestBioacoustics = requestState.bioacoustics;
 
     if (!requestAsset?.audioUrl) {
-        const failure = {
-            ok: false,
-            error: 'No audio asset is loaded for backend analysis.',
-        };
+        const failure = withFormattedBackendFailure(buildBackendFailure('backend-asset-missing'));
         appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
@@ -928,10 +1101,11 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         bioacoustics: requestBioacoustics,
     });
     if (!readiness.ready) {
-        const failure = {
-            ok: false,
+        const failure = withFormattedBackendFailure({
             error: readiness.message || 'The backend action is not ready to run.',
-        };
+        }, {
+            errorCode: 'backend-analysis-failed',
+        });
         appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
@@ -950,11 +1124,10 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             requestedAt: new Date().toISOString(),
         });
     } catch (error) {
-        const failure = {
-            ok: false,
-            error: error?.message || 'Failed to prepare the backend request payload.',
-        };
-        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
+        const failure = withFormattedBackendFailure(buildBackendFailure('backend-request-build-failed', {
+            error: error?.message || undefined,
+        }));
+        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error, details: failure.details || null });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
     }
@@ -972,6 +1145,21 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
 
     try {
         const response = await runBackendSelectionAnalysis(requestPayload);
+        if (response?.ok === false) {
+            const failure = withFormattedBackendFailure(response, {
+                errorCode: response?.errorCode || 'backend-analysis-failed',
+            });
+            appendBackendLog({
+                level: 'error',
+                scope: 'bridge',
+                message: failure.error,
+                details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
+            });
+            sendToBackendMonitor('backend-call-monitor:call-failed', failure);
+            sendToMainWindow('backend-call:completed', failure);
+            return failure;
+        }
+
         const saveResult = enrichBackendSaveResult(response?.saveResult || {});
         const completedResponse = {
             ...response,
@@ -995,16 +1183,19 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         sendToMainWindow('backend-call:completed', completedResponse);
         return completedResponse;
     } catch (error) {
-        const failure = error?.payload || {
-            ok: false,
-            error: error?.message || 'Backend analysis failed.',
-            stderr: error?.stderr || '',
-        };
+        const failure = error?.payload
+            ? withFormattedBackendFailure(error.payload, {
+                errorCode: error?.payload?.errorCode || error?.errorCode || 'backend-analysis-failed',
+            })
+            : withFormattedBackendFailure(buildBackendFailure(error?.errorCode || 'backend-analysis-failed', {
+                error: error?.message || undefined,
+                stderr: error?.stderr || '',
+            }));
         appendBackendLog({
             level: 'error',
             scope: 'bridge',
             message: failure.error,
-            details: failure.stderr || failure.traceback || null,
+            details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
         });
         sendToBackendMonitor('backend-call-monitor:call-failed', failure);
         sendToMainWindow('backend-call:completed', failure);

@@ -1,0 +1,65 @@
+{
+  "scopes": {
+    "bridge": {
+      "label": "Electron Bridge"
+    },
+    "backend-stderr": {
+      "label": "Python Backend stderr"
+    },
+    "recorded-audio": {
+      "label": "Recorded Audio"
+    }
+  },
+  "levels": {
+    "info": {
+      "label": "Info"
+    },
+    "warn": {
+      "label": "Warning"
+    },
+    "error": {
+      "label": "Error"
+    }
+  },
+  "detailFields": {
+    "details": {
+      "label": "Details"
+    },
+    "requestId": {
+      "label": "Request ID"
+    },
+    "saveMode": {
+      "label": "Save Mode"
+    },
+    "saved": {
+      "label": "Saved"
+    },
+    "artifact": {
+      "label": "Artifact"
+    },
+    "savePath": {
+      "label": "Save Path"
+    },
+    "assetId": {
+      "label": "Asset ID"
+    },
+    "includeMfcc": {
+      "label": "Include MFCC"
+    },
+    "backendRunnerPath": {
+      "label": "Backend Runner Path"
+    },
+    "stderr": {
+      "label": "Standard Error"
+    },
+    "stdout": {
+      "label": "Standard Output"
+    },
+    "traceback": {
+      "label": "Traceback"
+    },
+    "exitCode": {
+      "label": "Exit Code"
+    }
+  }
+}

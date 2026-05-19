@@ -40,12 +40,23 @@ const elements = {
 const viewState = {
     actionCatalog: {},
     defaultActionType: '',
+    errorCatalog: {},
     saveModeCatalog: {},
     currentState: null,
     logs: [],
     latestResult: null,
     isRunning: false,
 };
+
+const MONITOR_FAILURE_FIELDS = [
+    { key: 'errorCode', label: 'Error Code' },
+    { key: 'error', label: 'Error' },
+    { key: 'exitCode', label: 'Exit Code' },
+    { key: 'stderr', label: 'Standard Error' },
+    { key: 'stdout', label: 'Standard Output' },
+    { key: 'traceback', label: 'Traceback' },
+    { key: 'details', label: 'Details' },
+];
 
 const loadBioHandlerPreferences = () => {
     try {
@@ -104,6 +115,114 @@ const getCurrentActionConfig = () => {
 const getSaveModeCatalog = () => viewState.saveModeCatalog && typeof viewState.saveModeCatalog === 'object'
     ? viewState.saveModeCatalog
     : {};
+
+const getErrorCatalog = () => viewState.errorCatalog && typeof viewState.errorCatalog === 'object'
+    ? viewState.errorCatalog
+    : {};
+
+const getSharedErrorMessage = (errorCode, fallback = '') => {
+    const normalizedErrorCode = typeof errorCode === 'string' ? errorCode.trim() : '';
+    if (normalizedErrorCode && typeof getErrorCatalog()[normalizedErrorCode]?.message === 'string' && getErrorCatalog()[normalizedErrorCode].message.trim() !== '') {
+        return getErrorCatalog()[normalizedErrorCode].message.trim();
+    }
+    return fallback;
+};
+
+const normalizeFailurePreviewValue = (value) => {
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        return trimmed || '';
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+        return String(value);
+    }
+
+    if (value && typeof value === 'object') {
+        return JSON.stringify(value, null, 2);
+    }
+
+    return '';
+};
+
+const buildFallbackFailureDisplay = (failurePayload) => ({
+    kind: 'backend-failure',
+    summary: '',
+    sections: MONITOR_FAILURE_FIELDS.map(({ key, label }) => {
+        const value = normalizeFailurePreviewValue(failurePayload?.[key]);
+        return value
+            ? { key, label, value }
+            : null;
+    }).filter(Boolean),
+});
+
+const formatStructuredFailurePreview = (formattedFailure, failurePayload = null) => {
+    const summary = typeof formattedFailure?.summary === 'string' && formattedFailure.summary.trim() !== ''
+        ? formattedFailure.summary.trim()
+        : '';
+    const sections = Array.isArray(formattedFailure?.sections) && formattedFailure.sections.length > 0
+        ? formattedFailure.sections
+        : buildFallbackFailureDisplay(failurePayload).sections;
+
+    if (!summary && sections.length === 0) {
+        return typeof failurePayload?.error === 'string' && failurePayload.error.trim() !== ''
+            ? failurePayload.error.trim()
+            : 'Backend call failed.';
+    }
+
+    return [
+        summary,
+        ...sections.map((section) => `${section.label}\n${section.value}`),
+    ].filter(Boolean).join('\n\n');
+};
+
+const formatLatestResultPreview = (latestResult) => {
+    if (!latestResult) {
+        return 'No backend calls yet.';
+    }
+
+    if (latestResult?.formattedFailure || latestResult?.ok === false) {
+        return formatStructuredFailurePreview(latestResult.formattedFailure, latestResult);
+    }
+
+    return JSON.stringify(latestResult, null, 2);
+};
+
+const normalizeLogDetailSections = (entry) => {
+    if (Array.isArray(entry?.formattedLog?.detailSections) && entry.formattedLog.detailSections.length > 0) {
+        return entry.formattedLog.detailSections.filter((section) => section && typeof section === 'object');
+    }
+
+    if (typeof entry?.details === 'string' && entry.details.trim() !== '') {
+        return [{
+            key: 'details',
+            label: 'Details',
+            value: entry.details.trim(),
+        }];
+    }
+
+    if (entry?.details && typeof entry.details === 'object' && !Array.isArray(entry.details)) {
+        return Object.keys(entry.details).map((fieldKey) => {
+            const rawValue = entry.details[fieldKey];
+            const value = typeof rawValue === 'string'
+                ? rawValue.trim()
+                : (typeof rawValue === 'number' || typeof rawValue === 'boolean')
+                    ? String(rawValue)
+                    : rawValue && typeof rawValue === 'object'
+                        ? JSON.stringify(rawValue, null, 2)
+                        : '';
+            return value
+                ? {
+                    key: fieldKey,
+                    label: fieldKey,
+                    value,
+                }
+                : null;
+        }).filter(Boolean);
+    }
+
+    return [];
+};
 
 const getCurrentBioState = () => viewState.currentState?.bioacoustics || null;
 
@@ -363,7 +482,7 @@ const renderLogs = () => {
 
         const meta = document.createElement('div');
         meta.className = 'log-meta';
-        meta.textContent = `${toText(entry.timestamp, 'n/a')} | ${toText(entry.scope, 'bridge')} | ${toText(entry.level, 'info').toUpperCase()}`;
+        meta.textContent = `${toText(entry.timestamp, 'n/a')} | ${toText(entry?.formattedLog?.scopeLabel, toText(entry.scope, 'bridge'))} | ${toText(entry?.formattedLog?.levelLabel, toText(entry.level, 'info').toUpperCase())}`;
 
         const message = document.createElement('div');
         message.className = 'log-message';
@@ -372,12 +491,28 @@ const renderLogs = () => {
         root.appendChild(meta);
         root.appendChild(message);
 
-        if (entry.details) {
+        const detailSections = normalizeLogDetailSections(entry);
+        if (detailSections.length > 0) {
             const details = document.createElement('div');
             details.className = 'log-details';
-            details.textContent = typeof entry.details === 'string'
-                ? entry.details
-                : JSON.stringify(entry.details, null, 2);
+
+            for (const section of detailSections) {
+                const detailSection = document.createElement('div');
+                detailSection.className = 'log-detail-section';
+
+                const label = document.createElement('div');
+                label.className = 'log-detail-label';
+                label.textContent = toText(section.label, 'Details');
+
+                const value = document.createElement('div');
+                value.className = 'log-detail-value';
+                value.textContent = toText(section.value, '');
+
+                detailSection.appendChild(label);
+                detailSection.appendChild(value);
+                details.appendChild(detailSection);
+            }
+
             root.appendChild(details);
         }
 
@@ -412,9 +547,7 @@ const renderAll = () => {
     renderBioHandler();
     renderFacts();
     elements.requestPreview.textContent = JSON.stringify(buildRequestPreview(), null, 2);
-    elements.resultPreview.textContent = viewState.latestResult
-        ? JSON.stringify(viewState.latestResult, null, 2)
-        : 'No backend calls yet.';
+    elements.resultPreview.textContent = formatLatestResultPreview(viewState.latestResult);
     elements.runCallBtn.disabled = !isActionReady();
     elements.runCallBtn.textContent = viewState.isRunning ? 'Running...' : 'Run Backend Call';
     renderLogs();
@@ -480,9 +613,17 @@ elements.runCallBtn.addEventListener('click', async () => {
         });
         viewState.latestResult = response;
     } catch (error) {
-        viewState.latestResult = {
+        const errorCode = typeof error?.errorCode === 'string' && error.errorCode.trim() !== ''
+            ? error.errorCode.trim()
+            : 'backend-call-invoke-failed';
+        const failure = {
             ok: false,
-            error: error?.message || 'Backend call failed.',
+            errorCode,
+            error: getSharedErrorMessage(errorCode, error?.message || 'Backend call failed.'),
+        };
+        viewState.latestResult = {
+            ...failure,
+            formattedFailure: buildFallbackFailureDisplay(failure),
         };
     } finally {
         viewState.isRunning = false;
@@ -494,6 +635,7 @@ const loadActionMetadata = async () => {
     if (!ipcRenderer) {
         viewState.actionCatalog = {};
         viewState.defaultActionType = '';
+        viewState.errorCatalog = {};
         viewState.saveModeCatalog = {};
         renderAll();
         return;
@@ -507,12 +649,16 @@ const loadActionMetadata = async () => {
         viewState.defaultActionType = typeof response?.defaultActionType === 'string'
             ? response.defaultActionType
             : '';
+        viewState.errorCatalog = response?.errors && typeof response.errors === 'object'
+            ? response.errors
+            : {};
         viewState.saveModeCatalog = response?.saveModes && typeof response.saveModes === 'object'
             ? response.saveModes
             : {};
     } catch (_error) {
         viewState.actionCatalog = {};
         viewState.defaultActionType = '';
+        viewState.errorCatalog = {};
         viewState.saveModeCatalog = {};
     }
 

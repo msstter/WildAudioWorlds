@@ -299,6 +299,26 @@
       word-break: break-word;
     }
 
+    .log-detail-section + .log-detail-section {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px dotted rgba(255, 255, 255, 0.08);
+    }
+
+    .log-detail-label {
+      color: var(--accent-strong);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      margin-bottom: 4px;
+    }
+
+    .log-detail-value {
+      color: #a7bfd9;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
     @media (max-width: 720px) {
       .page {
         width: min(100vw, calc(100vw - 16px));
