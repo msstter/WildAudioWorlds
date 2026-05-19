@@ -39,7 +39,10 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - A third DataManager slice now covers recorded-audio source-input publication plus the shared onset writer layers, so `recorded-audio/import`, onset workbook persistence, label/transcript/TextGrid export, selection-export artifacts, and onset-editor persistence writes now route through DataManager-compatible helpers when the shared package tree is available.
 - A fourth DataManager closure slice now routes the remaining standalone AudioOnsetFinder batch, workbook, report, plot, analyzer, selector, and noise-profile artifact writes through shared DataManager-compatible bridges, leaving only preset/config persistence and explicit standalone-fallback internals on direct local writes.
 - Focused validation now passes for the DataManager contract slice plus the headless-safe AudioOnsetFinder writer/Excel/pipeline bundle; pytest startup seeds PyQt6's bundled plugin paths and non-viewer onset-editor helper imports no longer require `pyqtgraph`.
-- The project is now past both the persistent local integration milestone and the main DataManager filesystem-authority milestone; the next work is to layer AudioManager's canonical session authority on top of that shared service boundary.
+- The persistent service now also emits canonical AudioManager event traffic through `events/poll`, and both shells now consume service-owned asset, transport, and revision state instead of relying only on shell-local caches.
+- Electron backend analysis requests now build from canonical `session/get_state` snapshots through the shared session contracts, while the backend monitor's readiness gating now queries Electron main for canonical readiness instead of treating the pushed monitor snapshot as the source of truth.
+- The merged control-surface audit is now documented in `docs/merged_control_surface_audit.md`, including the Electron shell, backend monitor, and AudioOnsetFinder companion; the Electron transport strip now also exposes always-visible `LIVE` and `CAM` launchers for the live-source and camera-control workflows.
+- The project is now past the first AudioManager publish, read-side, and canonical backend-request slices; the main remaining cross-app integration work is coordinated dirty-state and revision-ready ownership so both shells switch revisions through one canonical service path.
 
 ## 2. Current Baseline
 
@@ -451,9 +454,12 @@ Completed Step 8 additions:
 - The persistent service now owns canonical `asset`, `transportState`, and revision mutations through `session/get_state`, `session/open_asset`, `session/clear_asset`, `asset/set_revision`, `transport/set_time`, and `transport/set_selection`, while persisting those updates back into the shared session manifest.
 - Bootstrap-written session manifests now sync their initial state into the live persistent service, and manifest-backed commands like `session/attach`, `session/detach`, and `shell/open_companion` now update the daemon's AudioManager state rather than leaving the in-memory service snapshot behind.
 - Both shells now publish real asset and transport mutations into that command surface: Electron publishes backend-monitor asset open or clear plus transport snapshots from the existing renderer bridge, and AudioOnsetFinder publishes onset-editor asset, playhead, and selection changes through the shared session helper.
-- Focused validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, `tests/contract/test_audio_onset_shell_session.py`, a focused onset-editor widget slice, and Electron syntax checks with the new AudioManager shell-publish path in place.
+- The persistent service now also publishes canonical AudioManager event traffic through `events/poll`, and both shells now consume that read side: AudioOnsetFinder polls and applies canonical asset, playhead, and selection updates through its shared session helper and event pump, and Electron hydrates from `local-integration:get-state`, polls canonical events, and applies remote state without republishing loops.
+- Backend analysis request building now uses canonical `session/get_state` snapshots rather than monitor-shaped renderer caches, preserving richer canonical asset metadata and treating Bioacoustics overrides as explicit request options rather than replacement request state.
+- The backend monitor's readiness gating now queries Electron main for canonical readiness instead of treating the pushed monitor snapshot as the source of truth, and the main Electron transport strip now exposes always-visible `LIVE` and `CAM` launchers for the live-source and camera-control workflows.
+- Focused validation now passes for the service-runtime and shell-session contract slices, the canonical onset-editor apply slice, Electron syntax checks across `main.cjs`, `preload.cjs`, `src/main.js`, and `public/backend-call-monitor.js`, and the current frontend production build.
 
-Exit criteria: moving the playhead in either view updates the other in real time, and completed onset-side edits switch both views to the same new asset revision.
+Exit criteria: both shells consume canonical asset and transport state in real time from the service-owned read path, and onset-side or backend-side edits switch both views to the same new asset revision through one coordinated revision-ready path.
 
 ## 7. Architectural Rules That Will Keep This Merge Safe
 
@@ -468,12 +474,12 @@ Exit criteria: moving the playhead in either view updates the other in real time
 
 ## 8. Recommended Next Execution Order
 
-The original first execution order has already been completed through the baseline, regression, persistent-service, DataManager, and first AudioManager-foundation work. The next execution order should now be:
+The original first execution order has already been completed through the baseline, regression, persistent-service, DataManager, AudioManager publish/read slices, canonical backend-request slice, and first cross-app control-surface pass. The next execution order should now be:
 
-1. Add canonical shell consumption and event delivery for AudioManager transport, asset, and revision updates without direct peer-to-peer synchronization.
-2. Add coordinated revision-ready switching and dirty-state ownership so onset-side edits move both shells to the same derived revision through one canonical service path.
-3. Expand contract and integration coverage around playhead sync, selection sync, revision switching, companion attach or detach reuse, and superseded jobs.
-4. Keep moving remaining compatibility logic away from legacy shell-local state holders and onto the shared service-owned session surface.
-5. Collapse temporary shell-local caches once the service-owned read path is strong enough to replace them.
+1. Add service-owned dirty-state, revision-ready, and revision-failed coordination so onset-side and backend-side edits move both shells through one canonical revision lifecycle.
+2. Route onset-editor save or edit completion and backend job completion onto that coordinated revision path instead of shell-local completion handling.
+3. Expand contract and integration coverage around canonical event delivery, live-source transitions, revision switching, companion attach or detach reuse, and superseded jobs.
+4. Decide which backend-monitor and companion-only actions should be promoted into clearer main-shell shortcuts after the merged control-surface audit.
+5. Retire the remaining temporary monitor-shaped and shell-local caches once the service-owned dirty-state and revision path can replace them safely.
 
 This updated sequence keeps momentum on the merge while still protecting the current working bridge and preserving both shells as independently usable entry points.

@@ -87,6 +87,19 @@ export const createRecordingControls = ({
         recModalOverlay.classList.remove('open');
     };
 
+    const openRecordingModal = ({ focusSelector = '' } = {}) => {
+        beforeOpenModal?.();
+        recModalOverlay.classList.add('open');
+
+        const normalizedSelector = typeof focusSelector === 'string' ? focusSelector.trim() : '';
+        if (!normalizedSelector) return;
+
+        const focusTarget = documentObject.querySelector(normalizedSelector);
+        if (focusTarget && typeof focusTarget.scrollIntoView === 'function') {
+            focusTarget.scrollIntoView({ block: 'start' });
+        }
+    };
+
     const setRecordingState = (recording) => {
         isRecording = recording;
         recordBtn.classList.toggle('recording', recording);
@@ -195,8 +208,7 @@ export const createRecordingControls = ({
             if (isRecording) {
                 void stopRecording();
             } else {
-                beforeOpenModal?.();
-                recModalOverlay.classList.add('open');
+                openRecordingModal();
             }
         });
 
@@ -226,5 +238,6 @@ export const createRecordingControls = ({
             syncAudioRowVisibility();
         },
         bind,
+        openModal: openRecordingModal,
     };
 };

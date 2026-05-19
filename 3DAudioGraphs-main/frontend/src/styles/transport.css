@@ -22,6 +22,8 @@
 }
 
 #backend-call-btn,
+#camera-controls-btn,
+#live-source-btn,
 #open-companion-btn,
 #restart-btn,
 #play-btn,
@@ -41,6 +43,21 @@
   background: #9cc8ff;
 }
 
+#camera-controls-btn {
+  background: #d6c0ff;
+  color: #1d1133;
+}
+
+#live-source-btn {
+  background: #a8f3a2;
+  color: #10260d;
+}
+
+#live-source-btn[data-live-state="active"] {
+  background: #ff9f7c;
+  color: #2a1207;
+}
+
 #open-companion-btn {
   background: #ffd38a;
 }
@@ -55,6 +72,12 @@
 }
 
 #open-companion-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+#camera-controls-btn:disabled,
+#live-source-btn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }

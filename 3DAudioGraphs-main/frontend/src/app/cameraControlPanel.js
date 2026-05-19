@@ -276,6 +276,7 @@ export const createCameraControlPanel = ({
 
     const cameraControlState = loadState();
     const sectionRoot = documentObject.createElement('section');
+    sectionRoot.id = 'camera-controls-section';
     sectionRoot.className = 'rec-section rec-camera-section';
 
     if (recModalRoot && recStartBtn && recStartBtn.parentNode === recModalRoot) {

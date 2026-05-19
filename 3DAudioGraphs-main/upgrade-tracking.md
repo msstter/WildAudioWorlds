@@ -13,18 +13,24 @@ Last updated: 2026-05-19
 
 ## App function updates
 
-- No source-level function changes were required for this upgrade.
-- No exported APIs were changed in the app during this update.
-- No additional frontend dependency or source-level upgrade changes were made during the 2026-05-19 Step 7 close-out and automation-validation follow-up work.
+- No additional dependency version changes were required after the 2026-05-19 refresh.
+- Source-level frontend follow-up work did happen after the dependency bump as the cross-app integration continued.
+- `frontend/main.cjs` and `frontend/preload.cjs`
+  - Added canonical backend-readiness IPC and shared canonical request-context loading so backend analysis and readiness checks now use service-owned session state.
+- `frontend/public/backend-call-monitor.js`
+  - Backend monitor action gating now queries canonical readiness from Electron main instead of relying on pushed monitor-snapshot state for selection readiness.
+- `frontend/src/main.js`, `frontend/index.html`, `frontend/src/styles/transport.css`, `frontend/src/app/recordingControls.js`, and `frontend/src/app/cameraControlPanel.js`
+  - Added always-visible `LIVE` and `CAM` transport launchers and minimal modal-open plumbing so the live-source and camera-control workflows are discoverable from the main shell.
 
 ## Validation
 
 - `npm install --dry-run`: reported the frontend dependencies as up to date after the refresh.
-- `npm run build`: passed successfully on 2026-05-18.
-- Build note: Vite reported a chunk-size warning for the main renderer bundle exceeding 500 kB after minification. This did not block the build.
-- No new frontend upgrade validation was needed on 2026-05-19 because the current progress slice did not change dependency versions or renderer source behavior.
+- `npm run build`: passed successfully on 2026-05-18 and again on 2026-05-19 after the renderer integration follow-up work.
+- `node --check src/main.js && node --check src/app/recordingControls.js && node --check src/app/cameraControlPanel.js`: passed on 2026-05-19.
+- Build note: Vite still reports a chunk-size warning for the main renderer bundle exceeding 500 kB after minification (`index-B19HM9Ky.js` at 954.28 kB in the latest build). This did not block the build.
 
 ## Next tracking entries
 
 - Add function-level notes here if a future dependency bump requires code updates.
 - Record any file paths touched by those changes alongside the package version that triggered them.
+- If the renderer chunk-size warning becomes actionable work, note the split strategy or bundle-shaping change here alongside the build output that motivated it.

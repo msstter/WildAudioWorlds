@@ -4047,6 +4047,8 @@ function buildAcademicAxes(bounds) {
 // AUDIO & UI SETUP
 // ==========================================
 const backendCallBtn = document.getElementById('backend-call-btn');
+const cameraControlsBtn = document.getElementById('camera-controls-btn');
+const liveSourceBtn = document.getElementById('live-source-btn');
 const openCompanionBtn = document.getElementById('open-companion-btn');
 const playBtn = document.getElementById('play-btn');
 const restartBtn = document.getElementById('restart-btn');
@@ -4111,6 +4113,20 @@ const formatTransportTimestamp = (timeSec = 0) => {
     return `${Math.floor(safeTimeSec / 60)}:${(`0${Math.floor(safeTimeSec % 60)}`).slice(-2)}`;
 };
 
+const syncAlwaysVisibleShellControls = () => {
+    if (liveSourceBtn) {
+        const liveState = livePerformanceControls?.getState?.() || { active: false, statusLabel: 'Inactive' };
+        liveSourceBtn.dataset.liveState = liveState.active ? 'active' : 'idle';
+        liveSourceBtn.title = liveState.active
+            ? `${liveState.statusLabel || 'Live source active'}. Click to stop the live source session.`
+            : 'Open Live Performance Source controls';
+    }
+
+    if (cameraControlsBtn) {
+        cameraControlsBtn.title = 'Open camera keyframe and motion controls';
+    }
+};
+
 const syncLiveSourceTransportUi = () => {
     const liveState = livePerformanceControls?.getState?.() || { active: false, mode: 'inactive' };
     const transportLocked = !!liveState.active;
@@ -4133,6 +4149,7 @@ const syncLiveSourceTransportUi = () => {
 
     progressBar.value = (audio.currentTime / (audio.duration || 1)) * 100;
     timeDisplay.innerText = `${formatTransportTimestamp(audio.currentTime)} / ${formatTransportTimestamp(audio.duration || 0)}`;
+    syncAlwaysVisibleShellControls();
 };
 
 let lastLiveSourceActive = false;
@@ -4172,6 +4189,7 @@ const handleLiveSourceStateChange = async (nextState) => {
     lastLiveSourceActive = isActive;
     syncLiveSourceTransportUi();
     syncBackendCallMonitorState();
+    syncAlwaysVisibleShellControls();
 };
 
 stopLiveSourceSession = async ({ restoreAsset = true, closeModal = true } = {}) => {
@@ -4846,6 +4864,18 @@ const recordingControls = createRecordingControls({
     beforeOpenModal: () => cameraControlPanel.refresh(),
 });
 
+if (liveSourceBtn) {
+    liveSourceBtn.addEventListener('click', () => {
+        void liveSourceUiState.toggleLiveSource();
+    });
+}
+
+if (cameraControlsBtn) {
+    cameraControlsBtn.addEventListener('click', () => {
+        recordingControls.openModal({ focusSelector: '#camera-controls-section' });
+    });
+}
+
 livePerformanceControls = createLivePerformanceControls({
     ensureAudioContext,
     getAudioContext,
@@ -4877,6 +4907,8 @@ livePerformanceControls = createLivePerformanceControls({
         console.error(...args);
     },
 });
+
+syncAlwaysVisibleShellControls();
 
 const appInitialization = createAppInitialization({
     applyInitialState: () => {
