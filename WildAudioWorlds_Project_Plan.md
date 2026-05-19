@@ -26,18 +26,20 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - The `session/` package now owns the first shared request contracts, selection normalization, analysis metadata, readiness metadata, result metadata, backend failure metadata, backend failure formatting, log metadata, log event templates, recorded-audio log events, and recorded-audio error metadata.
 - The backend-call monitor now renders shared failure and log view-models produced in Electron main rather than inventing those monitor-facing structures locally.
 - A first standalone-shell versus linked-session attach contract draft now exists in `docs/session_attach_contract.md`, including the first session manifest, launch payload, and attach payload draft.
-- A thin stdio local integration bootstrap now exists in `services/local_integration/bootstrap_service.py`, publishes the first session manifests under `data/sessions/`, hosts the current backend-call and recorded-audio compatibility commands, and now also accepts explicit `shell/open_companion` and `session/attach` commands.
-- The Electron bridge now routes its backend-call and recorded-audio command execution through that bootstrap instead of directly orchestrating runner scripts in shell-local bridge code.
+- A persistent local integration service now exists across `services/local_integration/bootstrap_service.py` and `services/local_integration/service_runtime.py`: the thin stdio bootstrap publishes session manifests, starts a reusable per-session Unix-domain-socket daemon, and still hosts compatibility command entrypoints for simple bootstrap paths.
+- The Electron and PyQt shell bridges now reuse the advertised persistent service endpoint for non-bootstrap local-integration commands instead of repeatedly orchestrating one-off Python startup for linked-session work.
 - The first linked-session contract checks now cover `service/bootstrap`, `shell/open_companion`, and `session/attach` manifest revision updates, including standalone-to-linked promotion when a second peer attaches.
 - The first real shell edge now exists from Electron into AudioOnsetFinder: the 3DAudioGraphs toolbar requests `shell/open_companion`, launches `pipeline_gui.py` with shared attach args, and AudioOnsetFinder startup joins the shared session through `session/attach` before the GUI shows.
 - The reverse shell edge now also exists from AudioOnsetFinder into Electron: the PyQt main window requests `shell/open_companion`, launches `3DAudioGraphs-main/frontend` with shared attach args, and Electron startup joins the shared session through `session/attach` before the BrowserWindow shows.
 - The thin bootstrap now also accepts explicit `session/detach`, and the shared manifest helper can remove peers and downgrade linked sessions back to standalone without losing the session identity or host-shell context.
 - Focused acceptance coverage now also exercises shell-edge launch failure, companion attach failure, `session/detach`, and linked-session reuse/re-attach behavior using narrow Python contract tests.
+- The persistent service layer now issues structured job IDs and status summaries for compatibility runner work, exposes `job/status` and `job/cancel`, and supports superseding older jobs when a new request declares `supersedesJobId`.
 - A first DataManager slice now exists in the shared `data/` package: graph-asset publication, asset-manifest ownership, manifest revision metadata, compatibility helper delegation, and per-asset revision directories are now routed through a shared Python DataManager instead of shell-local file writes.
 - A second DataManager slice now covers backend-call JSON/WAV export publication, bioacoustics workbook-write delegation, and fallback non-graph export path generation, so the current 3DAudioGraphs compatibility path no longer writes derived artifacts directly outside DataManager.
 - A third DataManager slice now covers recorded-audio source-input publication plus the shared onset writer layers, so `recorded-audio/import`, onset workbook persistence, label/transcript/TextGrid export, selection-export artifacts, and onset-editor persistence writes now route through DataManager-compatible helpers when the shared package tree is available.
 - A fourth DataManager closure slice now routes the remaining standalone AudioOnsetFinder batch, workbook, report, plot, analyzer, selector, and noise-profile artifact writes through shared DataManager-compatible bridges, leaving only preset/config persistence and explicit standalone-fallback internals on direct local writes.
-- The project is now ready to move from the completed DataManager filesystem-authority step into AudioManager session authority.
+- Focused validation now passes for the DataManager contract slice plus the headless-safe AudioOnsetFinder writer/Excel/pipeline bundle; pytest startup seeds PyQt6's bundled plugin paths and non-viewer onset-editor helper imports no longer require `pyqtgraph`.
+- The project is now past both the persistent local integration milestone and the main DataManager filesystem-authority milestone; the next work is to layer AudioManager's canonical session authority on top of that shared service boundary.
 
 ## 2. Current Baseline
 
@@ -377,7 +379,7 @@ Current progress inside Step 4:
 
 Exit criteria: old script entry points still work, but their logic now resolves through the new shared package.
 
-### Step 5. Define the dual-shell launch model and shared command surface [In Progress]
+### Step 5. Define the dual-shell launch model and shared command surface [Complete]
 
 - Define the contract for standalone-shell mode versus linked-session mode.
 - Add a minimal shell-launch and session-attach contract so either UI can open the other with active asset and session context.
@@ -393,20 +395,27 @@ Completed Step 5 prep:
 - The bootstrap now also accepts explicit `shell/open_companion` and `session/attach` requests and has focused contract coverage for manifest revision updates across bootstrap, open-companion, and attach flows.
 - The first real shell edge now uses those commands: Electron can request companion launch through the bootstrap, spawn AudioOnsetFinder with shared session attach args, and AudioOnsetFinder startup attaches back into the linked session before Qt finishes booting.
 
-Remaining Step 5 targets:
+Step 5 closure additions:
 
-- Extend the reverse shell edge so AudioOnsetFinder can launch or reopen the Electron companion into the same shared session.
-- Extend the bootstrap into explicit `session/detach` flow.
-- Keep the first implementation thin and compatibility-oriented so both shells remain independently launchable while the shared service path is introduced.
+- The reverse shell edge now also exists from AudioOnsetFinder into Electron: the PyQt shell can request `shell/open_companion`, launch the Electron companion with shared attach args, and Electron startup calls `session/attach` before the BrowserWindow shows.
+- The bootstrap now also supports explicit `session/detach`, and the shared manifest helper can remove peers and downgrade linked sessions back to standalone without losing the session identity or host-shell context.
+- Focused acceptance coverage now exercises shell-edge launch failure, companion attach failure, `session/detach`, and linked-session reuse or re-attach behavior while both shells remain independently launchable.
 
 Exit criteria: either shell can start alone, and one shell can launch the other into the same session without bypassing shared services.
 
-### Step 6. Replace one-off Python runners with a persistent local integration service [Not Started]
+### Step 6. Replace one-off Python runners with a persistent local integration service [Complete]
 
 - Introduce one long-lived Python service process instead of spawning a new Python process for every analysis request.
 - Allow stdio bootstrapping for simple single-shell startup paths, but use multi-client local IPC for linked sessions where both shells must attach to the same service instance.
 - Add structured job IDs, progress reporting, and failure payloads.
 - Add cancellation, supersession, and duplicate-job suppression for revision-producing work.
+
+Completed Step 6 additions:
+
+- `service/bootstrap` now promotes linked sessions onto a reusable per-session daemon in `services/local_integration/service_runtime.py`, advertises the Unix-domain-socket endpoint through the session manifest, and preserves stdio bootstrap compatibility for initial launch paths.
+- Both shells now prefer the advertised persistent endpoint for non-bootstrap local-integration commands, so attach, open-companion, backend-call, and recorded-audio requests can reuse one live service instance during a shared session.
+- Compatibility runner work now executes as structured service jobs with stable job IDs, active-job summaries in `service/ping`, direct `job/status` lookup, `job/cancel`, failure payload propagation, and supersession wiring through `supersedesJobId`.
+- Focused validation now passes for the persistent-service contract bundle (`tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, `tests/contract/test_audio_onset_shell_session.py`) plus the Electron main-process syntax check on `3DAudioGraphs-main/frontend/main.cjs`.
 
 Exit criteria: both shells can issue backend commands during one app session without repeatedly booting Python, and a linked session can support both shells at once.
 
@@ -425,6 +434,7 @@ Current slice status:
 - DataManager now also owns backend-call JSON/WAV export publication plus the current bioacoustics workbook writer delegation and fallback XLSX export path generation from `run_selection_analysis.py` and `bioacoustics_workbook.py`.
 - DataManager now also owns recorded-audio source-input publication for `recorded-audio/import`, and the shared onset writer layers now route labels, transcripts, TextGrids, workbook writes, selection exports, and onset-editor persistence artifacts through DataManager-compatible helpers with standalone fallback.
 - DataManager-compatible bridge helpers now also own the remaining standalone AudioOnsetFinder batch, workbook, report, plot, analyzer, selector, and noise-profile artifact publications while preserving standalone fallback behavior when the shared package tree is absent.
+- Focused validation now passes for `tests/contract/test_data_manager.py` and for the headless-safe AudioOnsetFinder writer and Excel bundle (`tests/test_shared_output_writers.py`, `tests/test_onset_exports.py`, `tests/test_excel_onset_io.py`, `tests/test_pipeline_file_selection.py`).
 
 Exit criteria: current analysis modules publish derived artifacts through DataManager-owned roots or DataManager-compatible bridge helpers, with only preset/config persistence and explicit standalone fallback internals remaining local.
 
@@ -452,10 +462,10 @@ Exit criteria: moving the playhead in either view updates the other in real time
 
 The original first execution order has already been completed through the baseline, regression, and first shared-package extraction work. The next execution order should now be:
 
-1. Extend the reverse shell edge so AudioOnsetFinder can launch or reopen the Electron companion into the same shared session.
-2. Extend the bootstrap into explicit `session/detach` flow before multi-peer shell lifecycle work expands.
-3. Add the next linked-session acceptance checks around shell-edge launch failures, companion attach failures, and session reuse.
-4. Start the first DataManager extraction around manifest ownership, mutable asset publication, revision-safe writes, and path authority.
-5. Only after those pieces are stable, begin AudioManager session authority for playhead, selection, and revision synchronization.
+1. Promote the thin bootstrap into the persistent local integration service shape needed for multi-client linked sessions, structured job lifecycle, and AudioManager ownership.
+2. Introduce AudioManager with canonical session state for active asset, playhead, selection, revision, and dirty-state broadcasts.
+3. Wire both shells to publish and consume AudioManager transport and selection events without direct peer-to-peer synchronization.
+4. Add coordinated revision-ready switching so onset-side edits move both shells to the same derived revision through one canonical service event.
+5. Expand contract and integration coverage around playhead sync, selection sync, revision switching, companion attach or detach reuse, and superseded jobs.
 
 This updated sequence keeps momentum on the merge while still protecting the current working bridge and preserving both shells as independently usable entry points.

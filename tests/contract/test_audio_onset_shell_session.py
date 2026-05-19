@@ -78,6 +78,7 @@ def test_audio_onset_shell_attach_uses_real_bootstrap_service(tmp_path):
     attach_response = attach_to_local_integration_session({
         "sessionId": bootstrap_response["session"]["sessionId"],
         "manifestPath": bootstrap_response["session"]["manifestPath"],
+        "serviceEndpoint": bootstrap_response["session"]["service"]["endpoint"],
         "originatingShell": "audio-graphs",
         "launchReason": "open-companion",
     }, workspace_root=tmp_path, bootstrap_root=ROOT)
@@ -86,6 +87,7 @@ def test_audio_onset_shell_attach_uses_real_bootstrap_service(tmp_path):
     assert attach_response["mode"] == "linked"
     assert attach_response["attachedShell"]["shellType"] == AUDIO_ONSET_FINDER_SHELL_TYPE
     assert attach_response["attachedShell"]["shellId"] == LOCAL_INTEGRATION_HOST_SHELL_ID
+    assert attach_response["service"]["transport"] == "unix-domain-socket"
 
     manifest = load_session_manifest(attach_response["manifestPath"])
     assert manifest["mode"] == "linked"
@@ -212,6 +214,7 @@ def test_audio_onset_companion_attach_failure_leaves_session_reusable(tmp_path):
         attach_to_local_integration_session({
             "sessionId": "missing-session",
             "manifestPath": bootstrap_response["session"]["manifestPath"],
+            "serviceEndpoint": bootstrap_response["session"]["service"]["endpoint"],
             "originatingShell": "audio-graphs",
             "launchReason": "open-companion",
         }, workspace_root=tmp_path, bootstrap_root=ROOT)
@@ -223,6 +226,7 @@ def test_audio_onset_companion_attach_failure_leaves_session_reusable(tmp_path):
     attach_response = attach_to_local_integration_session({
         "sessionId": bootstrap_response["session"]["sessionId"],
         "manifestPath": bootstrap_response["session"]["manifestPath"],
+        "serviceEndpoint": bootstrap_response["session"]["service"]["endpoint"],
         "originatingShell": "audio-graphs",
         "launchReason": "open-companion",
     }, workspace_root=tmp_path, bootstrap_root=ROOT)
@@ -230,3 +234,37 @@ def test_audio_onset_companion_attach_failure_leaves_session_reusable(tmp_path):
     assert attach_response["ok"] is True
     assert attach_response["sessionId"] == bootstrap_response["session"]["sessionId"]
     assert attach_response["mode"] == "linked"
+
+
+def test_audio_onset_shell_attach_reuses_persistent_service_without_respawning_bootstrap(tmp_path, monkeypatch):
+    bootstrap_response = _handle_command({
+        "command": "service/bootstrap",
+        "workspaceRoot": str(tmp_path),
+        "session": {
+            "hostShell": {
+                "shellId": "shell-graph-001",
+                "shellType": "audio-graphs",
+                "startedAt": "2026-05-19T12:00:00+00:00",
+            },
+            "launchContext": {
+                "originatingShell": "audio-graphs",
+                "launchReason": "service-bootstrap",
+            },
+        },
+    })
+
+    def _unexpected_run(*_args, **_kwargs):
+        raise AssertionError("attach should reuse the persistent local integration service instead of respawning bootstrap_service.py")
+
+    monkeypatch.setattr("local_integration_session.subprocess.run", _unexpected_run)
+
+    attach_response = attach_to_local_integration_session({
+        "sessionId": bootstrap_response["session"]["sessionId"],
+        "manifestPath": bootstrap_response["session"]["manifestPath"],
+        "serviceEndpoint": bootstrap_response["session"]["service"]["endpoint"],
+        "originatingShell": "audio-graphs",
+        "launchReason": "open-companion",
+    }, workspace_root=tmp_path, bootstrap_root=ROOT)
+
+    assert attach_response["ok"] is True
+    assert attach_response["service"]["transport"] == "unix-domain-socket"

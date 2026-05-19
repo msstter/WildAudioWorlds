@@ -2,6 +2,7 @@ const { randomUUID } = require('crypto');
 const { spawn, spawnSync } = require('child_process');
 const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
 const fs = require('fs');
+const net = require('net');
 const path = require('path');
 
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
@@ -1029,6 +1030,115 @@ function runLocalIntegrationServiceCommand(command, payload, {
     onStderrLine = null,
 } = {}) {
     return new Promise((resolve, reject) => {
+        const normalizedEnvelope = {
+            command,
+            workspaceRoot: getWorkspaceRoot(),
+            projectRoot: getProjectRoot(),
+            session: buildLocalIntegrationSessionPayload({
+                launchReason,
+                asset,
+                selection,
+            }),
+            payload,
+        };
+
+        const resolveServiceTransport = (endpoint, transport = '') => {
+            const normalizedTransport = typeof transport === 'string' ? transport.trim() : '';
+            if (normalizedTransport) {
+                return normalizedTransport;
+            }
+            if (typeof endpoint === 'string' && endpoint.trim().endsWith('.py')) {
+                return 'stdio';
+            }
+            return typeof endpoint === 'string' && endpoint.trim() !== ''
+                ? 'unix-domain-socket'
+                : '';
+        };
+
+        const resolveServiceDescriptor = () => {
+            const cachedService = localIntegrationSessionCache?.service && typeof localIntegrationSessionCache.service === 'object'
+                ? localIntegrationSessionCache.service
+                : {};
+            const cachedEndpoint = typeof cachedService.endpoint === 'string' ? cachedService.endpoint.trim() : '';
+            if (cachedEndpoint) {
+                return {
+                    endpoint: cachedEndpoint,
+                    transport: resolveServiceTransport(cachedEndpoint, cachedService.transport),
+                };
+            }
+
+            const launchEndpoint = typeof localIntegrationShellLaunchRequest?.serviceEndpoint === 'string'
+                ? localIntegrationShellLaunchRequest.serviceEndpoint.trim()
+                : '';
+            if (launchEndpoint) {
+                return {
+                    endpoint: launchEndpoint,
+                    transport: resolveServiceTransport(launchEndpoint),
+                };
+            }
+
+            return {
+                endpoint: '',
+                transport: '',
+            };
+        };
+
+        const applyParsedResponse = (parsed) => {
+            if (parsed?.session && typeof parsed.session === 'object') {
+                localIntegrationSessionCache = {
+                    ...(localIntegrationSessionCache || {}),
+                    ...parsed.session,
+                };
+            }
+
+            return parsed || {
+                ok: true,
+                session: localIntegrationSessionCache,
+            };
+        };
+
+        const buildCommandError = (parsed, stdout = '', stderr = '') => {
+            const error = new Error(parsed?.error || `Local integration service command failed: ${command}`);
+            error.payload = parsed || null;
+            error.stderr = stderr;
+            error.stdout = stdout;
+            return error;
+        };
+
+        const sendSocketCommand = (endpoint) => new Promise((socketResolve, socketReject) => {
+            let stdout = '';
+            const client = net.createConnection(endpoint);
+            client.setEncoding('utf8');
+
+            client.on('connect', () => {
+                client.end(JSON.stringify(normalizedEnvelope));
+            });
+
+            client.on('data', (chunk) => {
+                stdout += chunk.toString();
+            });
+
+            client.on('error', (error) => {
+                error.stdout = stdout;
+                socketReject(error);
+            });
+
+            client.on('close', (hadError) => {
+                if (hadError) {
+                    return;
+                }
+
+                try {
+                    const parsed = stdout.trim() ? JSON.parse(stdout) : null;
+                    socketResolve(parsed);
+                } catch (parseError) {
+                    parseError.stdout = stdout;
+                    socketReject(parseError);
+                }
+            });
+        });
+
+        const runBootstrapCommand = () => {
         const bootstrapPath = resolveLocalIntegrationBootstrapPath();
         if (!fs.existsSync(bootstrapPath)) {
             reject(new Error(`Local integration service bootstrap not found: ${bootstrapPath}`));
@@ -1099,18 +1209,29 @@ function runLocalIntegrationServiceCommand(command, payload, {
             });
         });
 
-        child.stdin.write(JSON.stringify({
-            command,
-            workspaceRoot: getWorkspaceRoot(),
-            projectRoot: getProjectRoot(),
-            session: buildLocalIntegrationSessionPayload({
-                launchReason,
-                asset,
-                selection,
-            }),
-            payload,
-        }));
+        child.stdin.write(JSON.stringify(normalizedEnvelope));
         child.stdin.end();
+        };
+
+        const serviceDescriptor = resolveServiceDescriptor();
+        if (command !== 'service/bootstrap' && serviceDescriptor.endpoint && serviceDescriptor.transport !== 'stdio') {
+            void sendSocketCommand(serviceDescriptor.endpoint)
+                .then((parsed) => {
+                    const responsePayload = applyParsedResponse(parsed);
+                    if (responsePayload?.ok === false) {
+                        reject(buildCommandError(responsePayload));
+                        return;
+                    }
+
+                    resolve(responsePayload);
+                })
+                .catch(() => {
+                    runBootstrapCommand();
+                });
+            return;
+        }
+
+        runBootstrapCommand();
     });
 }
 

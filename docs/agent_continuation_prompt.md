@@ -35,23 +35,33 @@ Do not treat those docs as optional notes. Use them to decide what is already do
 
 At the start of this prompt, the repo already has:
 
-- A thin local integration bootstrap in `services/local_integration/bootstrap_service.py`
+- A persistent local integration service split across `services/local_integration/bootstrap_service.py` and `services/local_integration/service_runtime.py`
 - Shared session manifest helpers and shared session metadata under `packages/wild_audio_worlds/session/`
-- Explicit `service/bootstrap`, `backend-call/run`, `recorded-audio/import`, `session/attach`, and `shell/open_companion` bootstrap coverage
+- Explicit `service/bootstrap`, `backend-call/run`, `recorded-audio/import`, `session/attach`, `session/detach`, and `shell/open_companion` coverage across the bootstrap and persistent-service boundary
 - Focused linked-session contract tests for bootstrap/open-companion/attach revision updates
 - The first real shell edge from Electron into AudioOnsetFinder:
   - Electron requests `shell/open_companion`
   - Electron launches `AudioOnsetFinder-main/GUI/pipeline_gui.py` with shared WildAudioWorlds session args
   - AudioOnsetFinder startup consumes those args and calls `session/attach` before the GUI shows
+- The reverse shell edge from AudioOnsetFinder into Electron:
+  - AudioOnsetFinder requests `shell/open_companion`
+  - AudioOnsetFinder launches `3DAudioGraphs-main/frontend` with shared WildAudioWorlds session args
+  - Electron startup consumes those args and calls `session/attach` before the BrowserWindow shows
+- Both shell clients now prefer the advertised persistent Unix-domain-socket endpoint for non-bootstrap local-integration commands, falling back to the stdio bootstrap only when the reusable endpoint is unavailable
+- The persistent service now owns structured compatibility-job lifecycle data including job IDs, active-job summaries, `job/status`, `job/cancel`, and supersession wiring through `supersedesJobId`
+- Step 7 DataManager filesystem authority is complete for the current derived-artifact surfaces, including the remaining standalone AudioOnsetFinder batch, report, analyzer, selector, and noise-profile outputs
+- Focused validation currently passes for `tests/contract/test_data_manager.py` and the AudioOnsetFinder writer/Excel/pipeline bundle (`tests/test_shared_output_writers.py`, `tests/test_onset_exports.py`, `tests/test_excel_onset_io.py`, `tests/test_pipeline_file_selection.py`)
+- Focused Step 6 validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, `tests/contract/test_audio_onset_shell_session.py`, and `node --check 3DAudioGraphs-main/frontend/main.cjs`
+- Headless pytest startup now seeds PyQt6's bundled plugin paths, and non-viewer `onset_editor` helper imports no longer require `pyqtgraph`
 
 ## Highest-Priority Next Work
 
 Unless the docs have changed by the time you read them, the next logical implementation order is:
 
-1. Extend the reverse shell edge so AudioOnsetFinder can launch or reopen the Electron companion into the same shared session.
-2. Extend the bootstrap into explicit `session/detach` flow.
-3. Add the next linked-session acceptance checks around shell-edge launch failures, companion attach failures, and session reuse.
-4. Start the first DataManager extraction around manifest ownership, mutable asset publication, revision-safe writes, and path authority.
+1. Introduce AudioManager as the canonical owner of active asset, playhead, selection, revision, and dirty-state session data.
+2. Wire both shells to publish and consume AudioManager transport and selection events without peer-to-peer synchronization.
+3. Add focused contract and integration coverage around playhead sync, selection sync, revision-ready switching, companion attach or detach reuse, and superseded jobs.
+4. Expand the persistent service from status or cancel scaffolding into richer progress or event delivery where the shells need live job feedback.
 
 If you discover the docs have moved beyond this, follow the docs instead of this snapshot.
 

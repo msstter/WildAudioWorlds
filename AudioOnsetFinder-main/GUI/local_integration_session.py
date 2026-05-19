@@ -14,7 +14,10 @@ def _ensure_shared_package_path() -> Path:
     for parent in current_path.parents:
         packages_dir = parent / "packages"
         if (packages_dir / "wild_audio_worlds").exists():
+            parent_str = str(parent)
             packages_dir_str = str(packages_dir)
+            if parent_str not in sys.path:
+                sys.path.insert(0, parent_str)
             if packages_dir_str not in sys.path:
                 sys.path.insert(0, packages_dir_str)
             return parent
@@ -157,6 +160,55 @@ def _load_cached_session_manifest(workspace_root: str | Path | None = None) -> d
     return _mapping_or_empty(load_session_manifest(manifest_path))
 
 
+def _load_manifest_service_descriptor(manifest_path: str | Path | None) -> dict[str, Any]:
+    normalized_manifest_path = _text_or_empty(manifest_path)
+    if not normalized_manifest_path:
+        return {}
+
+    path = Path(normalized_manifest_path)
+    if not path.exists():
+        return {}
+
+    return _mapping_or_empty(load_session_manifest(path).get("service"))
+
+
+def _resolve_service_transport(endpoint: str, transport: str) -> str:
+    normalized_transport = _text_or_empty(transport)
+    if normalized_transport:
+        return normalized_transport
+    if endpoint.endswith(".py"):
+        return "stdio"
+    return "unix-domain-socket" if endpoint else ""
+
+
+def _resolve_envelope_service_descriptor(envelope: dict[str, Any], workspace_root: Path) -> dict[str, str]:
+    explicit_endpoint = _text_or_empty(envelope.get("serviceEndpoint"))
+    explicit_transport = _text_or_empty(envelope.get("serviceTransport"))
+    if explicit_endpoint:
+        return {
+            "endpoint": explicit_endpoint,
+            "transport": _resolve_service_transport(explicit_endpoint, explicit_transport),
+        }
+
+    cached_service = _mapping_or_empty(_resolve_cached_session(workspace_root).get("service"))
+    cached_endpoint = _text_or_empty(cached_service.get("endpoint"))
+    if cached_endpoint:
+        return {
+            "endpoint": cached_endpoint,
+            "transport": _resolve_service_transport(cached_endpoint, _text_or_empty(cached_service.get("transport"))),
+        }
+
+    manifest_service = _load_manifest_service_descriptor(envelope.get("manifestPath"))
+    manifest_endpoint = _text_or_empty(manifest_service.get("endpoint"))
+    if manifest_endpoint:
+        return {
+            "endpoint": manifest_endpoint,
+            "transport": _resolve_service_transport(manifest_endpoint, _text_or_empty(manifest_service.get("transport"))),
+        }
+
+    return {}
+
+
 def _run_local_integration_command(
     envelope: dict[str, Any],
     *,
@@ -168,6 +220,24 @@ def _run_local_integration_command(
         **envelope,
         "workspaceRoot": str(workspace),
     }
+
+    service_descriptor = _resolve_envelope_service_descriptor(normalized_envelope, workspace)
+    service_endpoint = _text_or_empty(service_descriptor.get("endpoint"))
+    service_transport = _text_or_empty(service_descriptor.get("transport"))
+    if _text_or_empty(normalized_envelope.get("command")) != "service/bootstrap" and service_endpoint and service_transport != "stdio":
+        from services.local_integration.service_runtime import send_service_command
+
+        try:
+            parsed_payload = _mapping_or_empty(send_service_command(service_endpoint, normalized_envelope))
+        except Exception:
+            parsed_payload = {}
+        else:
+            if not parsed_payload.get("ok"):
+                error_message = _text_or_empty(parsed_payload.get("error")) or "AudioOnsetFinder local integration service command failed."
+                raise RuntimeError(error_message)
+            _update_local_integration_session_cache(parsed_payload, workspace_root=workspace)
+            return parsed_payload
+
     bootstrap_path = resolve_local_integration_bootstrap_path(bootstrap_root)
     if not bootstrap_path.exists():
         raise FileNotFoundError(f"Local integration bootstrap not found: {bootstrap_path}")
@@ -265,6 +335,8 @@ def build_audio_onset_attach_envelope(launch_request: dict[str, str], *, workspa
     return {
         "command": "session/attach",
         "workspaceRoot": str(workspace),
+        "manifestPath": _text_or_empty(launch_request.get("manifestPath")),
+        "serviceEndpoint": _text_or_empty(launch_request.get("serviceEndpoint")),
         "payload": payload,
     }
 

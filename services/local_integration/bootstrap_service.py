@@ -13,7 +13,10 @@ def _ensure_shared_package_path() -> Path:
     for parent in current_path.parents:
         packages_dir = parent / "packages"
         if (packages_dir / "wild_audio_worlds").exists():
+            parent_str = str(parent)
             packages_dir_str = str(packages_dir)
+            if parent_str not in sys.path:
+                sys.path.insert(0, parent_str)
             if packages_dir_str not in sys.path:
                 sys.path.insert(0, packages_dir_str)
             return parent
@@ -23,6 +26,7 @@ def _ensure_shared_package_path() -> Path:
 WORKSPACE_ROOT = _ensure_shared_package_path()
 
 from wild_audio_worlds.session.session_manifest import (  # noqa: E402
+    build_session_id,
     build_session_manifest,
     build_session_summary,
     load_session_manifest,
@@ -114,8 +118,31 @@ def _ensure_session(envelope: dict[str, Any]) -> tuple[dict[str, Any], Path]:
         workspace_root,
         session_payload,
         existing_manifest=existing_manifest,
-        service_descriptor=_build_service_descriptor(envelope, session_payload),
+        service_descriptor=None if _mapping_or_empty(existing_manifest.get("service")) else _build_service_descriptor(envelope, session_payload),
     )
+
+
+def _prepare_bootstrap_session(envelope: dict[str, Any]) -> tuple[Path, dict[str, Any], dict[str, Any], dict[str, Any]]:
+    workspace_root = _resolve_workspace_root(envelope)
+    session_payload = _mapping_or_empty(envelope.get("session"))
+    session_id = _text_or_empty(session_payload.get("sessionId")) or build_session_id()
+    session_payload["sessionId"] = session_id
+
+    existing_manifest = load_session_manifest(resolve_session_manifest_path(workspace_root, session_id))
+    host_shell = _mapping_or_empty(session_payload.get("hostShell"))
+    launch_context = _mapping_or_empty(session_payload.get("launchContext"))
+
+    from services.local_integration.service_runtime import ensure_persistent_service
+
+    service_descriptor = ensure_persistent_service(
+        workspace_root,
+        session_id,
+        owner_shell_id=_text_or_empty(host_shell.get("shellId")),
+        owner_shell_type=_text_or_empty(host_shell.get("shellType"))
+        or _text_or_empty(launch_context.get("originatingShell"))
+        or "audio-graphs",
+    )
+    return workspace_root, session_payload, existing_manifest, service_descriptor
 
 
 def _load_existing_session(envelope: dict[str, Any], *, command: str) -> tuple[Path, dict[str, Any], Path]:
@@ -330,7 +357,13 @@ def _handle_command(envelope: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("Local integration bootstrap payload is missing command.")
 
     if command == "service/bootstrap":
-        manifest, manifest_path = _ensure_session(envelope)
+        workspace_root, session_payload, existing_manifest, service_descriptor = _prepare_bootstrap_session(envelope)
+        manifest, manifest_path = _save_session(
+            workspace_root,
+            session_payload,
+            existing_manifest=existing_manifest,
+            service_descriptor=service_descriptor,
+        )
         session_summary = build_session_summary(manifest, manifest_path)
         return {
             "ok": True,
