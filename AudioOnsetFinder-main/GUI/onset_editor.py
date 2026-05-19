@@ -308,7 +308,23 @@ def _monospace_css_family() -> str:
 try:
     from audio_viewer import AudioViewerWidget as _AudioViewerWidget
 except ImportError:
-    from GUI.audio_viewer import AudioViewerWidget as _AudioViewerWidget
+    try:
+        from GUI.audio_viewer import AudioViewerWidget as _AudioViewerWidget
+        _AUDIO_VIEWER_IMPORT_ERROR = None
+    except ImportError as exc:
+        _AudioViewerWidget = None
+        _AUDIO_VIEWER_IMPORT_ERROR = exc
+else:
+    _AUDIO_VIEWER_IMPORT_ERROR = None
+
+
+def _require_audio_viewer() -> None:
+    if _AudioViewerWidget is not None:
+        return
+    raise ImportError(
+        "OnsetEditorPanel requires the optional 'pyqtgraph' viewer stack via audio_viewer.py. "
+        "Install the viewer dependencies to enable the full onset editor UI."
+    ) from _AUDIO_VIEWER_IMPORT_ERROR
 
 # ---------------------------------------------------------------------------
 # Theme constants (match pipeline_gui.py)
@@ -2885,6 +2901,7 @@ class OnsetEditorPanel(QWidget):
         cycle so that Qt's paint engine has time to fully initialise the
         QGraphicsScene font caches (avoids SIGSEGV on macOS Qt6).
         """
+        _require_audio_viewer()
         self._viewer = _AudioViewerWidget()
         self._viewer.setVisible(False)  # keep hidden during insertion
         self._viewer._onset_hitbox_px = self._onset_hitbox_px

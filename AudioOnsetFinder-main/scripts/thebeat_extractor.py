@@ -32,7 +32,11 @@ import numpy as np  # numerical array operations for interval math
 import pandas as pd  # dataframe construction and Excel export
 from scipy.signal import butter, sosfilt  # high-pass filter implementation
 from scipy.stats import entropy  # Shannon entropy for rhythm ratio distribution
-from thebeat import Sequence  # object-oriented IOI / rhythm sequence handler
+
+try:
+    from thebeat import Sequence  # object-oriented IOI / rhythm sequence handler
+except ImportError:
+    Sequence = None
 
 from onset_detectors import (detect_onsets, refine_onsets_to_sample, available_methods,
                              last_f0_metrics, last_madmom_tempo,
@@ -734,10 +738,21 @@ def calculate_stable_subset_metrics(stable_dyad_records):
     }
 
 
+def _require_thebeat() -> None:
+    if Sequence is not None:
+        return
+    raise ImportError(
+        "thebeat_extractor requires the optional 'thebeat' package to run extraction. "
+        "Install 'thebeat' to use this backend."
+    )
+
+
 def main():
     # ==========================================
     # 2. AUDIO PROCESSING LOOP
     # ==========================================
+    _require_thebeat()
+
     if not os.path.isdir(audio_folder):
         print(f"ERROR: Audio folder not found: {audio_folder}")
         print("Run the Audio Editor (Step 1) first, or update the audio_folder path.")
