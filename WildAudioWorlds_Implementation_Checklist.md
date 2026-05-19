@@ -13,7 +13,7 @@ Last updated: 2026-05-19
 - [x] Add the first linked-session bootstrap and manifest-revision contract checks
 - [x] Extend the bootstrap into explicit `session/attach` and `shell/open_companion` flows
 - [x] Wire the first shell-edge caller through the new `session/attach` and `shell/open_companion` bootstrap commands
-- [ ] Introduce DataManager as the single writer for derived artifacts
+- [x] Introduce DataManager as the single writer for derived artifacts
 - [ ] Introduce AudioManager as the shared session authority
 
 ## Completed Foundations
@@ -91,6 +91,12 @@ Last updated: 2026-05-19
 - [x] Route the shared onset writer layers through DataManager-compatible write helpers so onset workbook, label, transcript, TextGrid, selection-export, and onset-editor persistence writes no longer publish directly when the shared package tree is available
 - [x] Preserve standalone AudioOnsetFinder compatibility by falling back to the legacy local writer behavior when the shared WildAudioWorlds packages are not present
 
+## Newly Completed DataManager Standalone Writer Closure Slice
+
+- [x] Extend the shared DataManager/write-helper surface with binary-file publication plus indexed CSV support so standalone workbook, figure, and report artifacts can republish through the managed output roots
+- [x] Route the remaining standalone AudioOnsetFinder batch, workbook, report, plot, analyzer, selector, and noise-profile artifact writers through shared DataManager-compatible bridges while preserving standalone fallback behavior
+- [x] Reduce the remaining direct local writes in `AudioOnsetFinder-main/scripts/` to preset/config persistence and explicit bridge-fallback internals rather than derived analysis artifact publication
+
 ## Newly Completed Step 5 Prep
 
 - [x] Write the standalone-shell versus linked-session attach contract as a concrete document plus first payload/schema draft
@@ -138,5 +144,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, focused linked-session acceptance coverage, DataManager-owned source-input publication for recorded-audio import, and DataManager-backed shared onset writer routing alongside the graph compatibility path
-- The highest-leverage next move is to finish the remaining standalone onset batch/export writer paths that still publish outside DataManager before starting AudioManager
+- Current implementation phase: Step 7 is now complete for the current derived-artifact surfaces: graph assets, backend exports, recorded-audio source publication, shared onset writers, and the remaining standalone AudioOnsetFinder batch/report/analyzer outputs now route through DataManager-compatible publication paths
+- The highest-leverage next move is to start AudioManager session authority work in Step 8 while keeping preset/config persistence and explicit standalone bridge fallbacks local

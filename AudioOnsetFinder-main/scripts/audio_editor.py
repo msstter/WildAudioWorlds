@@ -112,6 +112,11 @@ import numpy as np  # numerical arrays for waveform manipulation
 import soundfile as sf  # writing the output WAV files
 from scipy.signal import butter, iirnotch, sosfilt  # filter implementations
 
+try:
+    from .shared_output_writers import write_text_output
+except ImportError:
+    from shared_output_writers import write_text_output
+
 
 # ==========================================
 # 1. ARGUMENT PARSING
@@ -1795,8 +1800,7 @@ def main():
                         os.path.splitext(filename)[0] + "_noise_profile.json")
                     noise_profile["adaptive_top_db"] = round(file_top_db, 2)
                     noise_profile["margin_db"] = noise_margin_db
-                    with open(profile_path, "w") as fp:
-                        json.dump(noise_profile, fp, indent=2)
+                    write_text_output(profile_path, json.dumps(noise_profile, indent=2))
             else:
                 file_top_db = db_threshold
 

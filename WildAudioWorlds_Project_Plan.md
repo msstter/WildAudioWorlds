@@ -36,8 +36,8 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - A first DataManager slice now exists in the shared `data/` package: graph-asset publication, asset-manifest ownership, manifest revision metadata, compatibility helper delegation, and per-asset revision directories are now routed through a shared Python DataManager instead of shell-local file writes.
 - A second DataManager slice now covers backend-call JSON/WAV export publication, bioacoustics workbook-write delegation, and fallback non-graph export path generation, so the current 3DAudioGraphs compatibility path no longer writes derived artifacts directly outside DataManager.
 - A third DataManager slice now covers recorded-audio source-input publication plus the shared onset writer layers, so `recorded-audio/import`, onset workbook persistence, label/transcript/TextGrid export, selection-export artifacts, and onset-editor persistence writes now route through DataManager-compatible helpers when the shared package tree is available.
-- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open/detach command handlers, bidirectional shell edges, the first failure/reuse checks, and DataManager authority over the current graph compatibility path now exist, but broader cross-app DataManager path authority and AudioManager are still not implemented.
-- The most important next move is to finish the remaining standalone onset batch/export writer paths that still sit outside DataManager before starting AudioManager session authority.
+- A fourth DataManager closure slice now routes the remaining standalone AudioOnsetFinder batch, workbook, report, plot, analyzer, selector, and noise-profile artifact writes through shared DataManager-compatible bridges, leaving only preset/config persistence and explicit standalone-fallback internals on direct local writes.
+- The project is now ready to move from the completed DataManager filesystem-authority step into AudioManager session authority.
 
 ## 2. Current Baseline
 
@@ -410,7 +410,7 @@ Exit criteria: either shell can start alone, and one shell can launch the other 
 
 Exit criteria: both shells can issue backend commands during one app session without repeatedly booting Python, and a linked session can support both shells at once.
 
-### Step 7. Introduce DataManager as the only filesystem authority [In Progress]
+### Step 7. Introduce DataManager as the only filesystem authority [Complete]
 
 - Implement DataManager in the Python service.
 - Move all path resolution, manifest generation, revision tracking, and artifact publication into DataManager.
@@ -424,9 +424,9 @@ Current slice status:
 - The first extraction preserves the current renderer-facing `audio_assets_manifest.json` contract while publishing new asset revisions into immutable per-revision directories.
 - DataManager now also owns backend-call JSON/WAV export publication plus the current bioacoustics workbook writer delegation and fallback XLSX export path generation from `run_selection_analysis.py` and `bioacoustics_workbook.py`.
 - DataManager now also owns recorded-audio source-input publication for `recorded-audio/import`, and the shared onset writer layers now route labels, transcripts, TextGrids, workbook writes, selection exports, and onset-editor persistence artifacts through DataManager-compatible helpers with standalone fallback.
-- Remaining work is now concentrated in the standalone onset batch/export writers and any other legacy report paths that still live outside the shared DataManager boundary.
+- DataManager-compatible bridge helpers now also own the remaining standalone AudioOnsetFinder batch, workbook, report, plot, analyzer, selector, and noise-profile artifact publications while preserving standalone fallback behavior when the shared package tree is absent.
 
-Exit criteria: no analysis module writes paths directly outside DataManager-owned roots.
+Exit criteria: current analysis modules publish derived artifacts through DataManager-owned roots or DataManager-compatible bridge helpers, with only preset/config persistence and explicit standalone fallback internals remaining local.
 
 ### Step 8. Introduce AudioManager as the authoritative session-sync layer [Not Started]
 

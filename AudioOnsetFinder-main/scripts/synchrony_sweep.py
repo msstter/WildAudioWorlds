@@ -41,6 +41,10 @@ if _SCRIPT_DIR not in sys.path:
     sys.path.insert(0, _SCRIPT_DIR)
 
 from onset_detectors import detect_onsets, refine_onsets_to_sample
+try:
+    from .shared_output_writers import save_matplotlib_figure, write_csv_dataframe
+except ImportError:
+    from shared_output_writers import save_matplotlib_figure, write_csv_dataframe
 
 # ── Lightweight copies of the helper functions (avoid circular imports) ──────
 
@@ -193,7 +197,7 @@ def plot_sweep(sweep_data, output_path, title_prefix=""):
     ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    save_matplotlib_figure(fig, output_path, dpi=150)
     plt.close(fig)
     print(f"  Sweep plot saved → {output_path}")
 
@@ -220,7 +224,7 @@ def plot_ioi_histogram(all_iois_ms, output_path, title_prefix=""):
     ax.grid(True, alpha=0.3)
 
     fig.tight_layout()
-    fig.savefig(output_path, dpi=150)
+    save_matplotlib_figure(fig, output_path, dpi=150)
     plt.close(fig)
     print(f"  IOI histogram saved → {output_path}")
 
@@ -391,12 +395,12 @@ def main():
             })
 
     csv_path = os.path.join(out_dir, "synchrony_sweep_results.csv")
-    pd.DataFrame(csv_rows).to_csv(csv_path, index=False)
+    write_csv_dataframe(csv_path, pd.DataFrame(csv_rows), index=False)
     print(f"\n  Sweep data saved → {csv_path}")
 
     # Summary CSV
     summary_path = os.path.join(out_dir, "synchrony_sweep_summary.csv")
-    pd.DataFrame(summary_rows).to_csv(summary_path, index=False)
+    write_csv_dataframe(summary_path, pd.DataFrame(summary_rows), index=False)
     print(f"  Summary saved   → {summary_path}")
 
     # Plots

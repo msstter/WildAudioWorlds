@@ -35,6 +35,19 @@ from typing import Iterable
 import numpy as np
 import pandas as pd
 
+try:
+    from .shared_output_writers import (
+        save_matplotlib_figure,
+        write_csv_dataframe as _write_csv_dataframe,
+        write_text_output as _write_text_output,
+    )
+except ImportError:
+    from shared_output_writers import (
+        save_matplotlib_figure,
+        write_csv_dataframe as _write_csv_dataframe,
+        write_text_output as _write_text_output,
+    )
+
 
 # ------------------------------------------------------------------
 # Raw vs stable dataset column mapping
@@ -328,9 +341,17 @@ def save_figure(fig, folder: str, stem: str, fmt: str = "png", dpi: int = 300):
     out_paths = []
     for f in formats:
         path = os.path.join(folder, f"{stem}.{f}")
-        fig.savefig(path, dpi=dpi, bbox_inches="tight")
+        save_matplotlib_figure(fig, path, dpi=dpi, bbox_inches="tight")
         out_paths.append(path)
     return out_paths
+
+
+def write_csv_dataframe(output_path: str, dataframe, *, index: bool = False) -> None:
+    _write_csv_dataframe(output_path, dataframe, index=index)
+
+
+def write_text_output(output_path: str, content: str) -> None:
+    _write_text_output(output_path, content)
 
 
 __all__ = [
@@ -345,4 +366,6 @@ __all__ = [
     "order_groups",
     "pick_rhythm_column",
     "save_figure",
+    "write_csv_dataframe",
+    "write_text_output",
 ]

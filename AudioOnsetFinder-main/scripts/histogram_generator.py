@@ -20,6 +20,11 @@ import sys  # exit with status code on fatal errors
 import matplotlib.pyplot as plt  # histogram generation and annotation
 import pandas as pd  # read the Excel workbook and manipulate imported data
 
+try:
+    from .shared_output_writers import save_matplotlib_figure
+except ImportError:
+    from shared_output_writers import save_matplotlib_figure
+
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
@@ -261,7 +266,7 @@ def create_histogram(rk_data, summary_row, summary_columns, title, save_path):
                     label='Isochronous Range')
     
     plt.tight_layout(pad=HIST_TIGHT_PAD)
-    plt.savefig(save_path, dpi=HIST_DPI, facecolor=HIST_BG_COLOR)
+    save_matplotlib_figure(plt, save_path, dpi=HIST_DPI, facecolor=HIST_BG_COLOR)
     plt.close()
 
 # ==========================================

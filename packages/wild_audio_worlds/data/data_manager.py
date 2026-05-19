@@ -85,10 +85,10 @@ def _build_temp_output_path(destination_path: Path) -> Path:
     return destination_path.with_name(f"{destination_path.name}.tmp")
 
 
-def _write_csv_atomic(destination_path: Path, dataframe: pd.DataFrame) -> None:
+def _write_csv_atomic(destination_path: Path, dataframe: pd.DataFrame, *, index: bool) -> None:
     destination_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = _build_temp_output_path(destination_path)
-    dataframe.to_csv(temp_path, index=False)
+    dataframe.to_csv(temp_path, index=index)
     temp_path.replace(destination_path)
 
 
@@ -320,8 +320,12 @@ class DataManager:
         _write_audio_atomic(Path(output_path), audio_data, sample_rate)
 
     @staticmethod
-    def write_csv_dataframe(output_path: str | Path, dataframe: pd.DataFrame) -> None:
-        _write_csv_atomic(Path(output_path), dataframe)
+    def write_binary_file(output_path: str | Path, payload: bytes | bytearray | memoryview) -> None:
+        _write_bytes_atomic(Path(output_path), bytes(payload))
+
+    @staticmethod
+    def write_csv_dataframe(output_path: str | Path, dataframe: pd.DataFrame, *, index: bool = False) -> None:
+        _write_csv_atomic(Path(output_path), dataframe, index=index)
 
     @staticmethod
     def write_json_file(output_path: str | Path, payload: dict[str, Any]) -> None:

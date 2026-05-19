@@ -25,6 +25,11 @@ import librosa
 import numpy as np
 from scipy.signal import hilbert as scipy_hilbert
 
+try:
+    from .shared_output_writers import write_text_output
+except ImportError:
+    from shared_output_writers import write_text_output
+
 # Add scripts/ to path for importing onset_detectors
 _SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 if _SCRIPT_DIR not in sys.path:
@@ -968,8 +973,7 @@ def main():
                 else args.input.rstrip("/"))
         out_path = f"{base}_onset_analysis.json"
 
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
+    write_text_output(out_path, json.dumps(result, indent=2))
 
     # Print summary
     a = result["analysis"]

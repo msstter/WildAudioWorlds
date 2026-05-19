@@ -39,7 +39,7 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_DIR, "scripts"))
 
-from group_assignment import ensure_output_folder, get_palette, load_file_summaries, save_figure  # noqa: E402
+from group_assignment import ensure_output_folder, get_palette, load_file_summaries, save_figure, write_csv_dataframe, write_text_output  # noqa: E402
 
 excel_path = os.path.join(_PROJECT_DIR, "Cross_Species_Rhythm_Data.xlsx")
 output_folder = os.path.join(_PROJECT_DIR, "PGLS")
@@ -259,23 +259,27 @@ coef_df = pd.DataFrame({
     "ci_low": ci_low,
     "ci_high": ci_high,
 })
-coef_df.to_csv(os.path.join(output_folder, "pgls_coefficients.csv"), index=False)
-pd.DataFrame([{"correlation_model": PGLS_CORRELATION_MODEL,
-               "lambda": best_lam,
-               "sigma2": float(sigma2),
-               "n_units": len(used_units),
-               "units_used": ", ".join(map(str, used_units))}]).to_csv(
-    os.path.join(output_folder, "pgls_lambda.csv"), index=False)
+write_csv_dataframe(os.path.join(output_folder, "pgls_coefficients.csv"), coef_df, index=False)
+write_csv_dataframe(
+    os.path.join(output_folder, "pgls_lambda.csv"),
+    pd.DataFrame([{"correlation_model": PGLS_CORRELATION_MODEL,
+                   "lambda": best_lam,
+                   "sigma2": float(sigma2),
+                   "n_units": len(used_units),
+                   "units_used": ", ".join(map(str, used_units))}]),
+    index=False,
+)
 
-with open(os.path.join(output_folder, "pgls_summary.txt"), "w") as fh:
-    fh.write("=== PGLS summary ===\n")
-    fh.write(f"Response: {PGLS_RESPONSE}\n")
-    fh.write(f"Predictors: {predictors}\n")
-    fh.write(f"Unit: {PGLS_UNIT_COLUMN}; n={len(used_units)}\n")
-    fh.write(f"Correlation: {PGLS_CORRELATION_MODEL}, lambda={best_lam:.4f}\n")
-    fh.write(f"sigma^2 = {sigma2:.4f}\n\n")
-    fh.write(coef_df.to_string(index=False))
-    fh.write("\n")
+write_text_output(
+    os.path.join(output_folder, "pgls_summary.txt"),
+    "=== PGLS summary ===\n"
+    f"Response: {PGLS_RESPONSE}\n"
+    f"Predictors: {predictors}\n"
+    f"Unit: {PGLS_UNIT_COLUMN}; n={len(used_units)}\n"
+    f"Correlation: {PGLS_CORRELATION_MODEL}, lambda={best_lam:.4f}\n"
+    f"sigma^2 = {sigma2:.4f}\n\n"
+    f"{coef_df.to_string(index=False)}\n",
+)
 
 # ---- Figures ----
 _pal = get_palette(PGLS_PALETTE, 3)

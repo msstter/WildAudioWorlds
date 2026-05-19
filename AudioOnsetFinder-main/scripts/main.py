@@ -21,6 +21,11 @@ import os # directory listing and file path joining
 import subprocess  # run each step script as a subprocess with command list
 import sys  # access Python executable path and handle script exit status
 
+try:
+    from .shared_output_writers import save_openpyxl_workbook, write_text_output, write_workbook_sheets
+except ImportError:
+    from shared_output_writers import save_openpyxl_workbook, write_text_output, write_workbook_sheets
+
 
 def _configure_utf8_console() -> None:
     os.environ.setdefault("PYTHONUTF8", "1")
@@ -901,8 +906,7 @@ _This report was written automatically by `scripts/main.py` after the step
 finished. Re-running the pipeline overwrites it._
 """
     try:
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(report)
+        write_text_output(report_path, report)
     except OSError as exc:
         print(f"  WARNING: could not write AnalysisReport.md "
               f"to {report_path}: {exc}")
@@ -1290,16 +1294,17 @@ def _write_analyses_summary_xlsx() -> str:
     folder = _resolve_summary_folder()
     out_path = os.path.join(folder, "AudioData_AnalysesSummary.xlsx")
     try:
-        with _pd.ExcelWriter(out_path, engine="openpyxl") as xw:
-            df.to_excel(xw, sheet_name="Pipeline Summary", index=False)
-            # Auto-size columns for readability.
-            ws = xw.sheets["Pipeline Summary"]
-            for i, col in enumerate(df.columns, start=1):
-                max_len = max(
-                    [len(str(col))]
-                    + [len(str(v)) for v in df[col].tolist()])
-                ws.column_dimensions[ws.cell(row=1, column=i).column_letter]\
-                    .width = min(max(max_len + 2, 12), 80)
+        from openpyxl import load_workbook
+
+        write_workbook_sheets(out_path, {"Pipeline Summary": df})
+        workbook = load_workbook(out_path)
+        worksheet = workbook["Pipeline Summary"]
+        for i, col in enumerate(df.columns, start=1):
+            max_len = max(
+                [len(str(col))]
+                + [len(str(v)) for v in df[col].tolist()])
+            worksheet.column_dimensions[worksheet.cell(row=1, column=i).column_letter].width = min(max(max_len + 2, 12), 80)
+        save_openpyxl_workbook(workbook, out_path)
     except Exception as exc:
         print(f"  WARNING: could not write {out_path}: {exc}")
         return ""

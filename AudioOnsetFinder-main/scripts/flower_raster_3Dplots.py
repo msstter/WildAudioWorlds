@@ -38,6 +38,11 @@ import fnmatch
 import numpy as np
 import pandas as pd
 
+try:
+    from .shared_output_writers import save_matplotlib_figure
+except ImportError:
+    from shared_output_writers import save_matplotlib_figure
+
 
 # =====================================================================
 # 1. CONFIGURATION
@@ -868,7 +873,7 @@ def _create_3d_png(petal_data, dataset_name, save_path, grouped_layout=None):
                   markerscale=3, handletextpad=0.3)
 
     fig.tight_layout()
-    fig.savefig(save_path, dpi=dpi)
+    save_matplotlib_figure(fig, save_path, dpi=dpi)
     plt.close(fig)
     print(f"  Saved static 3D flower → {save_path}")
 

@@ -98,6 +98,11 @@ try:
         write_praat_textgrid_export,
         write_whisper_transcript_exports,
     )
+    from .shared_output_writers import (
+        save_matplotlib_figure,
+        save_openpyxl_workbook,
+        write_workbook_sheets,
+    )
 except ImportError:
     from onset_metrics import (
         build_dyad_records as _build_dyad_records_impl,
@@ -117,6 +122,11 @@ except ImportError:
         write_audacity_labels,
         write_praat_textgrid_export,
         write_whisper_transcript_exports,
+    )
+    from shared_output_writers import (
+        save_matplotlib_figure,
+        save_openpyxl_workbook,
+        write_workbook_sheets,
     )
 
 # ==========================================
@@ -1093,7 +1103,7 @@ if __name__ == "__main__":
                             label="Onsets",
                         )
                         image_path = os.path.join(audio_folder, image_filename)
-                        plt.savefig(image_path)
+                        save_matplotlib_figure(plt, image_path)
                         plt.close()
 
                 # --- SAVE FILE SUMMARY DATA ---
@@ -1262,17 +1272,19 @@ if __name__ == "__main__":
     if _output_dir and not os.path.isdir(_output_dir):
         os.makedirs(_output_dir, exist_ok=True)
 
-    with pd.ExcelWriter(output_excel_path) as writer:
-        df_summary.to_excel(writer, sheet_name="File Summaries", index=False)
-        df_dyads.to_excel(writer, sheet_name="Dyadic Events (For Plots)", index=False)
-        if FILTER_STABLE_RHYTHMS:
-            df_stable_dyads.to_excel(writer, sheet_name="Dyadic Events (Stable Rhythms)", index=False)
-        if df_demographics is not None and not df_demographics.empty:
-            df_demographics.to_excel(
-                writer, sheet_name="File Demographics", index=False)
-            print(f"Wrote File Demographics sheet: "
-                  f"{len(df_demographics)} row(s), "
-                  f"{len(df_demographics.columns) - 1} field(s).")
+    workbook_sheets = {
+        "File Summaries": df_summary,
+        "Dyadic Events (For Plots)": df_dyads,
+    }
+    if FILTER_STABLE_RHYTHMS:
+        workbook_sheets["Dyadic Events (Stable Rhythms)"] = df_stable_dyads
+    if df_demographics is not None and not df_demographics.empty:
+        workbook_sheets["File Demographics"] = df_demographics
+        print(f"Wrote File Demographics sheet: "
+              f"{len(df_demographics)} row(s), "
+              f"{len(df_demographics.columns) - 1} field(s).")
+
+    write_workbook_sheets(output_excel_path, workbook_sheets)
 
     # --- Add explanatory comments to column headers ---
     _SUMMARY_COMMENTS = {
@@ -1336,7 +1348,7 @@ if __name__ == "__main__":
                 header_text = cell.value
                 if header_text and header_text in col_comments:
                     cell.comment = Comment(col_comments[header_text], COLUMN_COMMENT_AUTHOR)
-        wb.save(output_excel_path)
+        save_openpyxl_workbook(wb, output_excel_path)
         print("Column header comments added to Excel file.")
 
     # --- Add "Formulas Used" reference sheet ---
@@ -1663,7 +1675,7 @@ if __name__ == "__main__":
         # Column A (row labels) can be narrower
         ws.column_dimensions["A"].width = 16
 
-        wb.save(output_excel_path)
+        save_openpyxl_workbook(wb, output_excel_path)
         print("Formulas reference sheet added to Excel file.")
 
     print(f"\nSUCCESS! Processed {len(file_summary_data)} files.")

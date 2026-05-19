@@ -26,7 +26,7 @@ if _PROJECT_DIR not in sys.path:
 
 from group_assignment import (  # noqa: E402
     assign_groups, ensure_output_folder, load_dyadic_events,
-    load_file_summaries, order_groups, save_figure,
+    load_file_summaries, order_groups, save_figure, write_csv_dataframe,
 )
 
 # Defaults
@@ -279,7 +279,7 @@ _plot_density(xi, yi, Z_pool, f"{TRH_TITLE} — all groups",
 # Dump the pooled density CSV
 pool_out = pd.DataFrame(Z_pool, index=[f"r_bin_{v:.3f}" for v in yi],
                          columns=[f"x_bin_{v:.2f}" for v in xi])
-pool_out.to_csv(os.path.join(output_folder, "tempo_ratio_density.csv"))
+write_csv_dataframe(os.path.join(output_folder, "tempo_ratio_density.csv"), pool_out, index=True)
 
 if TRH_FACET_BY_GROUP:
     for g, (xi_g, yi_g, Z_g, mode_g, n_g) in group_densities.items():

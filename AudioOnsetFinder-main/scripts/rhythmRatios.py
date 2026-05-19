@@ -35,7 +35,7 @@ if _PROJECT_DIR not in sys.path:
 from group_assignment import (  # noqa: E402
     assign_groups, ensure_output_folder, get_palette,
     group_assignment_config_from, load_dyadic_events, load_file_summaries,
-    order_groups, save_figure,
+    order_groups, save_figure, write_csv_dataframe,
 )
 
 # ==========================================
@@ -191,7 +191,7 @@ for g in groups:
         })
 summary_df = pd.DataFrame(rows)
 summary_csv = os.path.join(output_folder, "rhythm_ratios_per_group.csv")
-summary_df.to_csv(summary_csv, index=False)
+write_csv_dataframe(summary_csv, summary_df, index=False)
 print(f"[rhythmRatios] wrote {summary_csv}")
 print(summary_df.to_string(index=False))
 

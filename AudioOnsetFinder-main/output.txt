@@ -1,0 +1,1282 @@
+.....................................FFF..............                   [100%]
+=================================== FAILURES ===================================
+____________ TestBackwardCompatibility.test_load_labels_still_works ____________
+
+    """
+    OnsetEditorPanel — Interactive onset editing panel for the Bioacoustics Rhythm Pipeline.
+    
+    Provides a full onset editing workflow:
+    - File browser (folder picker + file combo)
+    - AudioViewerWidget (waveform + spectrogram with draggable onset markers)
+    - Editable QTableWidget showing onset times, IOIs, r_k, stable flag
+    - Toolbar with Add/Remove/Save, Undo/Redo
+    - Load/Save Audacity label files and Excel
+    
+    Dependencies: PyQt6, numpy, audio_viewer (AudioViewerWidget).
+    Optional: openpyxl (for Excel I/O), librosa (for audio loading).
+    """
+    
+    from __future__ import annotations
+    
+    import copy
+    import json
+    import os
+    import platform
+    import re
+    import sys
+    from typing import List, Optional
+    
+    import librosa
+    import numpy as np
+    import pandas as pd
+    
+    from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+    from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
+    from PyQt6.QtWidgets import (
+        QAbstractItemView,
+        QApplication,
+        QButtonGroup,
+        QCheckBox,
+        QColorDialog,
+        QComboBox,
+        QDialog,
+        QDialogButtonBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFrame,
+        QGroupBox,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QLineEdit,
+        QListWidget,
+        QMenu,
+        QMessageBox,
+        QPlainTextEdit,
+        QProgressDialog,
+        QPushButton,
+        QRadioButton,
+        QScrollArea,
+        QSizePolicy,
+        QSlider,
+        QSpinBox,
+        QSplitter,
+        QTableWidget,
+        QTableWidgetItem,
+        QToolButton,
+        QVBoxLayout,
+        QWidget,
+        QWidgetAction,
+    )
+    
+    try:
+        from onset_editor_analysis import (
+            _analyze_focus_region_settings as _analyze_focus_region_settings_impl,
+            _build_per_signal_variable_checks as _build_per_signal_variable_checks_impl,
+            _build_focus_signal_profile as _build_focus_signal_profile_impl,
+            _build_signal_profile_from_saved_dirs as _build_signal_profile_from_saved_dirs_impl,
+            _build_region_detector_kwargs as _build_region_detector_kwargs_impl,
+            _build_uniform_probe_times as _build_uniform_probe_times_impl,
+            _candidate_peak_times_for_region as _candidate_peak_times_for_region_impl,
+            _compute_per_signal_spectral_threshold as _compute_per_signal_spectral_threshold_impl,
+            _compute_per_signal_variable_score_threshold as _compute_per_signal_variable_score_threshold_impl,
+            _compute_spectral_similarity_at_time as _compute_spectral_similarity_at_time_impl,
+            _diagnose_candidate_matches as _diagnose_candidate_matches_impl,
+            _evaluate_exemplar_self_check as _evaluate_exemplar_self_check_impl,
+            _extract_recommended_detect_settings as _extract_recommended_detect_settings_impl,
+            _format_match_miss_reason as _format_match_miss_reason_impl,
+            _merge_negative_detection_hits as _merge_negative_detection_hits_impl,
+            _recover_focus_region_onset as _recover_focus_region_onset_impl,
+            _region_contains_onset as _region_contains_onset_impl,
+            _score_onsets_by_variable_match as _score_onsets_by_variable_match_impl,
+            _summarize_signal_region_analyses as _summarize_signal_region_analyses_impl,
+        )
+        from onset_editor_detection import _DetectOnsetsWorker as _ExtractedDetectOnsetsWorker
+        from onset_editor_dialogs import (
+            _AnalyzeSignalsDialog as _ExtractedAnalyzeSignalsDialog,
+            _ExcelColumnDialog as _ExtractedExcelColumnDialog,
+            _ExcelSaveDialog as _ExtractedExcelSaveDialog,
+            _OnsetEditorSettingsDialog,
+        )
+        from onset_editor_io import (
+            _HOTKEY_DEFS,
+            _HAS_EXCEL_IO,
+            _build_load_selections_request as _build_load_selections_request_impl,
+            _extract_region_audio as _extract_region_audio_impl,
+            _export_selections_audio as _export_selections_audio_impl,
+            _eio,
+            _find_label_file,
+            _get_hotkey_map,
+            _list_audio_files,
+            _load_hotkey_overrides,
+            _load_labels,
+            _load_muter_presets,
+            _load_saved_selections as _load_saved_selections_impl,
+            _next_export_number as _next_export_number_impl,
+            _read_selection_manifest,
+            _review_audio_paths,
+            _regions_from_manifests,
+            _resolve_restored_file_selection,
+            _load_saved_onset_session_for_audio,
+            _save_hotkey_overrides,
+            _save_labels,
+            _selection_manifest_filename,
+            _summarize_load_selections_error as _summarize_load_selections_error_impl,
+            _write_audio_file,
+            _write_selection_manifest,
+            _write_focus_regions_json as _write_focus_regions_json_impl,
+            _write_onset_layer_settings as _write_onset_layer_settings_impl,
+        )
+        from onset_editor_state import (
+            OnsetLayerState as _OnsetLayerState,
+            _UndoStack,
+            add_shared_comparison_onsets as _add_shared_comparison_onsets_impl,
+            add_unique_comparison_onsets as _add_unique_comparison_onsets_impl,
+            activate_layer_range as _activate_layer_range_impl,
+            append_empty_layer as _append_empty_layer_impl,
+            append_layer_state as _append_layer_state_impl,
+            append_merged_layer as _append_merged_layer_impl,
+            build_panel_config_snapshot as _build_panel_config_snapshot_impl,
+            build_loaded_onset_session as _build_loaded_onset_session_impl,
+            build_save_selections_export_plan as _build_save_selections_export_plan_impl,
+            build_comparison_display_state as _build_comparison_display_state_impl,
+            classify_comparison_onsets as _classify_comparison_onsets_impl,
+            compute_ioi as _compute_ioi_impl,
+            compute_rk as _compute_rk_impl,
+            compute_stable as _compute_stable_impl,
+            deserialize_layers as _deserialize_layer_states,
+            extract_scalar_config_restore_values as _extract_scalar_config_restore_values_impl,
+            format_checked_layer_label as _format_checked_layer_label_impl,
+            filter_removed_onsets as _filter_removed_onsets_impl,
+            hydrate_layer_state as _hydrate_layer_state,
+            load_layer_state as _load_active_layer_state,
+            make_default_layer as _make_default_layer_state,
+            merge_onsets as _merge_onsets_impl,
+            build_layer_overlay_markers as _build_layer_overlay_markers_impl,
+            remove_active_layer as _remove_active_layer_impl,
+            remove_main_only_onsets as _remove_main_only_onsets_impl,
+            remove_onsets_in_range as _remove_onsets_in_range_impl,
+            restore_configured_layers as _restore_configured_layers_impl,
+            reset_layers_for_loaded_file as _reset_layers_for_loaded_file_impl,
+            restore_loaded_focus_regions as _restore_loaded_focus_regions_impl,
+            serialize_layers as _serialize_layer_states,
+            save_layer_state as _save_active_layer_state,
+            select_exclusive_layer as _select_exclusive_layer_impl,
+            summarize_loaded_selections_feedback as _summarize_loaded_selections_feedback_impl,
+            summarize_save_selections_preflight as _summarize_save_selections_preflight_impl,
+            summarize_focus_region_status as _summarize_focus_region_status_impl,
+            summarize_focus_restore_state as _summarize_focus_restore_state_impl,
+            summarize_review_finish_state as _summarize_review_finish_state_impl,
+            summarize_review_navigation_state as _summarize_review_navigation_state_impl,
+            summarize_layer_selection_change as _summarize_layer_selection_change_impl,
+            switch_active_layer as _switch_active_layer_impl,
+            transfer_focus_region as _transfer_focus_region_impl,
+        )
+        from onset_editor_workbench_dialogs import (
+            OnsetManagerDialog as _ExtractedOnsetManagerDialog,
+            _DetectOnsetsDialog as _ExtractedDetectOnsetsDialog,
+            _LayerCheckboxMenu as _ExtractedLayerCheckboxMenu,
+            _LoadSelectionsDialog as _ExtractedLoadSelectionsDialog,
+            _MfccAudioEditDialog as _ExtractedMfccAudioEditDialog,
+            _NegativeSubtractionDialog as _ExtractedNegativeSubtractionDialog,
+            _PerSignalConfigDialog as _ExtractedPerSignalConfigDialog,
+            _SaveSelectionsDialog as _ExtractedSaveSelectionsDialog,
+            _default_signal_export_dirs as _default_signal_export_dirs_impl,
+        )
+    except ImportError:
+        from GUI.onset_editor_analysis import (
+            _analyze_focus_region_settings as _analyze_focus_region_settings_impl,
+            _build_per_signal_variable_checks as _build_per_signal_variable_checks_impl,
+            _build_focus_signal_profile as _build_focus_signal_profile_impl,
+            _build_signal_profile_from_saved_dirs as _build_signal_profile_from_saved_dirs_impl,
+            _build_region_detector_kwargs as _build_region_detector_kwargs_impl,
+            _build_uniform_probe_times as _build_uniform_probe_times_impl,
+            _candidate_peak_times_for_region as _candidate_peak_times_for_region_impl,
+            _compute_per_signal_spectral_threshold as _compute_per_signal_spectral_threshold_impl,
+            _compute_per_signal_variable_score_threshold as _compute_per_signal_variable_score_threshold_impl,
+            _compute_spectral_similarity_at_time as _compute_spectral_similarity_at_time_impl,
+            _diagnose_candidate_matches as _diagnose_candidate_matches_impl,
+            _evaluate_exemplar_self_check as _evaluate_exemplar_self_check_impl,
+            _extract_recommended_detect_settings as _extract_recommended_detect_settings_impl,
+            _format_match_miss_reason as _format_match_miss_reason_impl,
+            _merge_negative_detection_hits as _merge_negative_detection_hits_impl,
+            _recover_focus_region_onset as _recover_focus_region_onset_impl,
+            _region_contains_onset as _region_contains_onset_impl,
+            _score_onsets_by_variable_match as _score_onsets_by_variable_match_impl,
+            _summarize_signal_region_analyses as _summarize_signal_region_analyses_impl,
+        )
+        from GUI.onset_editor_detection import _DetectOnsetsWorker as _ExtractedDetectOnsetsWorker
+        from GUI.onset_editor_dialogs import (
+            _AnalyzeSignalsDialog as _ExtractedAnalyzeSignalsDialog,
+            _ExcelColumnDialog as _ExtractedExcelColumnDialog,
+            _ExcelSaveDialog as _ExtractedExcelSaveDialog,
+            _OnsetEditorSettingsDialog,
+        )
+        from GUI.onset_editor_io import (
+            _HOTKEY_DEFS,
+            _HAS_EXCEL_IO,
+            _build_load_selections_request as _build_load_selections_request_impl,
+            _extract_region_audio as _extract_region_audio_impl,
+            _export_selections_audio as _export_selections_audio_impl,
+            _eio,
+            _find_label_file,
+            _get_hotkey_map,
+            _list_audio_files,
+            _load_hotkey_overrides,
+            _load_labels,
+            _load_muter_presets,
+            _load_saved_selections as _load_saved_selections_impl,
+            _next_export_number as _next_export_number_impl,
+            _read_selection_manifest,
+            _review_audio_paths,
+            _regions_from_manifests,
+            _resolve_restored_file_selection,
+            _load_saved_onset_session_for_audio,
+            _save_hotkey_overrides,
+            _save_labels,
+            _selection_manifest_filename,
+            _summarize_load_selections_error as _summarize_load_selections_error_impl,
+            _write_selection_manifest,
+            _write_focus_regions_json as _write_focus_regions_json_impl,
+            _write_onset_layer_settings as _write_onset_layer_settings_impl,
+        )
+        from GUI.onset_editor_state import (
+            OnsetLayerState as _OnsetLayerState,
+            _UndoStack,
+            add_shared_comparison_onsets as _add_shared_comparison_onsets_impl,
+            add_unique_comparison_onsets as _add_unique_comparison_onsets_impl,
+            activate_layer_range as _activate_layer_range_impl,
+            append_empty_layer as _append_empty_layer_impl,
+            append_layer_state as _append_layer_state_impl,
+            append_merged_layer as _append_merged_layer_impl,
+            build_panel_config_snapshot as _build_panel_config_snapshot_impl,
+            build_loaded_onset_session as _build_loaded_onset_session_impl,
+            build_save_selections_export_plan as _build_save_selections_export_plan_impl,
+            build_comparison_display_state as _build_comparison_display_state_impl,
+            classify_comparison_onsets as _classify_comparison_onsets_impl,
+            compute_ioi as _compute_ioi_impl,
+            compute_rk as _compute_rk_impl,
+            compute_stable as _compute_stable_impl,
+            deserialize_layers as _deserialize_layer_states,
+            extract_scalar_config_restore_values as _extract_scalar_config_restore_values_impl,
+            format_checked_layer_label as _format_checked_layer_label_impl,
+            filter_removed_onsets as _filter_removed_onsets_impl,
+            hydrate_layer_state as _hydrate_layer_state,
+            load_layer_state as _load_active_layer_state,
+            make_default_layer as _make_default_layer_state,
+            merge_onsets as _merge_onsets_impl,
+            build_layer_overlay_markers as _build_layer_overlay_markers_impl,
+            remove_active_layer as _remove_active_layer_impl,
+            remove_main_only_onsets as _remove_main_only_onsets_impl,
+            remove_onsets_in_range as _remove_onsets_in_range_impl,
+            restore_configured_layers as _restore_configured_layers_impl,
+            reset_layers_for_loaded_file as _reset_layers_for_loaded_file_impl,
+            restore_loaded_focus_regions as _restore_loaded_focus_regions_impl,
+            serialize_layers as _serialize_layer_states,
+            save_layer_state as _save_active_layer_state,
+            select_exclusive_layer as _select_exclusive_layer_impl,
+            summarize_loaded_selections_feedback as _summarize_loaded_selections_feedback_impl,
+            summarize_save_selections_preflight as _summarize_save_selections_preflight_impl,
+            summarize_focus_region_status as _summarize_focus_region_status_impl,
+            summarize_focus_restore_state as _summarize_focus_restore_state_impl,
+            summarize_review_finish_state as _summarize_review_finish_state_impl,
+            summarize_review_navigation_state as _summarize_review_navigation_state_impl,
+            summarize_layer_selection_change as _summarize_layer_selection_change_impl,
+            switch_active_layer as _switch_active_layer_impl,
+            transfer_focus_region as _transfer_focus_region_impl,
+        )
+        from GUI.onset_editor_workbench_dialogs import (
+            OnsetManagerDialog as _ExtractedOnsetManagerDialog,
+            _DetectOnsetsDialog as _ExtractedDetectOnsetsDialog,
+            _LayerCheckboxMenu as _ExtractedLayerCheckboxMenu,
+            _LoadSelectionsDialog as _ExtractedLoadSelectionsDialog,
+            _MfccAudioEditDialog as _ExtractedMfccAudioEditDialog,
+            _NegativeSubtractionDialog as _ExtractedNegativeSubtractionDialog,
+            _PerSignalConfigDialog as _ExtractedPerSignalConfigDialog,
+            _SaveSelectionsDialog as _ExtractedSaveSelectionsDialog,
+            _default_signal_export_dirs as _default_signal_export_dirs_impl,
+        )
+    
+    
+    def _monospace_css_family() -> str:
+        system = platform.system()
+        if system == "Darwin":
+            return "Menlo"
+        if system == "Windows":
+            return "Consolas"
+        return "DejaVu Sans Mono"
+    
+    # ---------------------------------------------------------------------------
+    # AudioViewerWidget import (same approach as pipeline_gui.py)
+    # ---------------------------------------------------------------------------
+    try:
+>       from audio_viewer import AudioViewerWidget as _AudioViewerWidget
+
+GUI/onset_editor.py:309: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """
+    AudioViewerWidget — GPU-accelerated audio viewer for the Bioacoustics Rhythm Pipeline.
+    
+    Provides waveform + spectrogram display using pyqtgraph, with audio playback,
+    onset marker overlays, region selection, and chunk navigation.  Designed to
+    replace the slow matplotlib-based viewers (AudioPreviewWindow, SpectrogramSelector,
+    OnsetSelector) with a single high-performance, reusable component.
+    
+    Dependencies: PyQt6, pyqtgraph, numpy, librosa.
+    Optional: sounddevice (for playback).
+    """
+    
+    from __future__ import annotations
+    
+    import platform
+    import threading
+    import time
+    from typing import Any, List, Optional, Tuple
+    
+    import numpy as np
+    
+    from PyQt6.QtCore import (
+        QObject,
+        QTimer,
+        Qt,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt6.QtGui import QColor, QFont, QKeyEvent, QAction
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMenu,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+    
+>   import pyqtgraph as pg
+E   ModuleNotFoundError: No module named 'pyqtgraph'
+
+GUI/audio_viewer.py:45: ModuleNotFoundError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_excel_onset_io.TestBackwardCompatibility object at 0x17edefa40>
+
+    def test_load_labels_still_works(self):
+>       from onset_editor import _load_labels, _save_labels
+
+tests/test_excel_onset_io.py:511: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+GUI/onset_editor.py:311: in <module>
+    from GUI.audio_viewer import AudioViewerWidget as _AudioViewerWidget
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """
+    AudioViewerWidget — GPU-accelerated audio viewer for the Bioacoustics Rhythm Pipeline.
+    
+    Provides waveform + spectrogram display using pyqtgraph, with audio playback,
+    onset marker overlays, region selection, and chunk navigation.  Designed to
+    replace the slow matplotlib-based viewers (AudioPreviewWindow, SpectrogramSelector,
+    OnsetSelector) with a single high-performance, reusable component.
+    
+    Dependencies: PyQt6, pyqtgraph, numpy, librosa.
+    Optional: sounddevice (for playback).
+    """
+    
+    from __future__ import annotations
+    
+    import platform
+    import threading
+    import time
+    from typing import Any, List, Optional, Tuple
+    
+    import numpy as np
+    
+    from PyQt6.QtCore import (
+        QObject,
+        QTimer,
+        Qt,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt6.QtGui import QColor, QFont, QKeyEvent, QAction
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMenu,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+    
+>   import pyqtgraph as pg
+E   ModuleNotFoundError: No module named 'pyqtgraph'
+
+GUI/audio_viewer.py:45: ModuleNotFoundError
+____________ TestBackwardCompatibility.test_save_labels_still_works ____________
+
+    """
+    OnsetEditorPanel — Interactive onset editing panel for the Bioacoustics Rhythm Pipeline.
+    
+    Provides a full onset editing workflow:
+    - File browser (folder picker + file combo)
+    - AudioViewerWidget (waveform + spectrogram with draggable onset markers)
+    - Editable QTableWidget showing onset times, IOIs, r_k, stable flag
+    - Toolbar with Add/Remove/Save, Undo/Redo
+    - Load/Save Audacity label files and Excel
+    
+    Dependencies: PyQt6, numpy, audio_viewer (AudioViewerWidget).
+    Optional: openpyxl (for Excel I/O), librosa (for audio loading).
+    """
+    
+    from __future__ import annotations
+    
+    import copy
+    import json
+    import os
+    import platform
+    import re
+    import sys
+    from typing import List, Optional
+    
+    import librosa
+    import numpy as np
+    import pandas as pd
+    
+    from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+    from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
+    from PyQt6.QtWidgets import (
+        QAbstractItemView,
+        QApplication,
+        QButtonGroup,
+        QCheckBox,
+        QColorDialog,
+        QComboBox,
+        QDialog,
+        QDialogButtonBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFrame,
+        QGroupBox,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QLineEdit,
+        QListWidget,
+        QMenu,
+        QMessageBox,
+        QPlainTextEdit,
+        QProgressDialog,
+        QPushButton,
+        QRadioButton,
+        QScrollArea,
+        QSizePolicy,
+        QSlider,
+        QSpinBox,
+        QSplitter,
+        QTableWidget,
+        QTableWidgetItem,
+        QToolButton,
+        QVBoxLayout,
+        QWidget,
+        QWidgetAction,
+    )
+    
+    try:
+        from onset_editor_analysis import (
+            _analyze_focus_region_settings as _analyze_focus_region_settings_impl,
+            _build_per_signal_variable_checks as _build_per_signal_variable_checks_impl,
+            _build_focus_signal_profile as _build_focus_signal_profile_impl,
+            _build_signal_profile_from_saved_dirs as _build_signal_profile_from_saved_dirs_impl,
+            _build_region_detector_kwargs as _build_region_detector_kwargs_impl,
+            _build_uniform_probe_times as _build_uniform_probe_times_impl,
+            _candidate_peak_times_for_region as _candidate_peak_times_for_region_impl,
+            _compute_per_signal_spectral_threshold as _compute_per_signal_spectral_threshold_impl,
+            _compute_per_signal_variable_score_threshold as _compute_per_signal_variable_score_threshold_impl,
+            _compute_spectral_similarity_at_time as _compute_spectral_similarity_at_time_impl,
+            _diagnose_candidate_matches as _diagnose_candidate_matches_impl,
+            _evaluate_exemplar_self_check as _evaluate_exemplar_self_check_impl,
+            _extract_recommended_detect_settings as _extract_recommended_detect_settings_impl,
+            _format_match_miss_reason as _format_match_miss_reason_impl,
+            _merge_negative_detection_hits as _merge_negative_detection_hits_impl,
+            _recover_focus_region_onset as _recover_focus_region_onset_impl,
+            _region_contains_onset as _region_contains_onset_impl,
+            _score_onsets_by_variable_match as _score_onsets_by_variable_match_impl,
+            _summarize_signal_region_analyses as _summarize_signal_region_analyses_impl,
+        )
+        from onset_editor_detection import _DetectOnsetsWorker as _ExtractedDetectOnsetsWorker
+        from onset_editor_dialogs import (
+            _AnalyzeSignalsDialog as _ExtractedAnalyzeSignalsDialog,
+            _ExcelColumnDialog as _ExtractedExcelColumnDialog,
+            _ExcelSaveDialog as _ExtractedExcelSaveDialog,
+            _OnsetEditorSettingsDialog,
+        )
+        from onset_editor_io import (
+            _HOTKEY_DEFS,
+            _HAS_EXCEL_IO,
+            _build_load_selections_request as _build_load_selections_request_impl,
+            _extract_region_audio as _extract_region_audio_impl,
+            _export_selections_audio as _export_selections_audio_impl,
+            _eio,
+            _find_label_file,
+            _get_hotkey_map,
+            _list_audio_files,
+            _load_hotkey_overrides,
+            _load_labels,
+            _load_muter_presets,
+            _load_saved_selections as _load_saved_selections_impl,
+            _next_export_number as _next_export_number_impl,
+            _read_selection_manifest,
+            _review_audio_paths,
+            _regions_from_manifests,
+            _resolve_restored_file_selection,
+            _load_saved_onset_session_for_audio,
+            _save_hotkey_overrides,
+            _save_labels,
+            _selection_manifest_filename,
+            _summarize_load_selections_error as _summarize_load_selections_error_impl,
+            _write_audio_file,
+            _write_selection_manifest,
+            _write_focus_regions_json as _write_focus_regions_json_impl,
+            _write_onset_layer_settings as _write_onset_layer_settings_impl,
+        )
+        from onset_editor_state import (
+            OnsetLayerState as _OnsetLayerState,
+            _UndoStack,
+            add_shared_comparison_onsets as _add_shared_comparison_onsets_impl,
+            add_unique_comparison_onsets as _add_unique_comparison_onsets_impl,
+            activate_layer_range as _activate_layer_range_impl,
+            append_empty_layer as _append_empty_layer_impl,
+            append_layer_state as _append_layer_state_impl,
+            append_merged_layer as _append_merged_layer_impl,
+            build_panel_config_snapshot as _build_panel_config_snapshot_impl,
+            build_loaded_onset_session as _build_loaded_onset_session_impl,
+            build_save_selections_export_plan as _build_save_selections_export_plan_impl,
+            build_comparison_display_state as _build_comparison_display_state_impl,
+            classify_comparison_onsets as _classify_comparison_onsets_impl,
+            compute_ioi as _compute_ioi_impl,
+            compute_rk as _compute_rk_impl,
+            compute_stable as _compute_stable_impl,
+            deserialize_layers as _deserialize_layer_states,
+            extract_scalar_config_restore_values as _extract_scalar_config_restore_values_impl,
+            format_checked_layer_label as _format_checked_layer_label_impl,
+            filter_removed_onsets as _filter_removed_onsets_impl,
+            hydrate_layer_state as _hydrate_layer_state,
+            load_layer_state as _load_active_layer_state,
+            make_default_layer as _make_default_layer_state,
+            merge_onsets as _merge_onsets_impl,
+            build_layer_overlay_markers as _build_layer_overlay_markers_impl,
+            remove_active_layer as _remove_active_layer_impl,
+            remove_main_only_onsets as _remove_main_only_onsets_impl,
+            remove_onsets_in_range as _remove_onsets_in_range_impl,
+            restore_configured_layers as _restore_configured_layers_impl,
+            reset_layers_for_loaded_file as _reset_layers_for_loaded_file_impl,
+            restore_loaded_focus_regions as _restore_loaded_focus_regions_impl,
+            serialize_layers as _serialize_layer_states,
+            save_layer_state as _save_active_layer_state,
+            select_exclusive_layer as _select_exclusive_layer_impl,
+            summarize_loaded_selections_feedback as _summarize_loaded_selections_feedback_impl,
+            summarize_save_selections_preflight as _summarize_save_selections_preflight_impl,
+            summarize_focus_region_status as _summarize_focus_region_status_impl,
+            summarize_focus_restore_state as _summarize_focus_restore_state_impl,
+            summarize_review_finish_state as _summarize_review_finish_state_impl,
+            summarize_review_navigation_state as _summarize_review_navigation_state_impl,
+            summarize_layer_selection_change as _summarize_layer_selection_change_impl,
+            switch_active_layer as _switch_active_layer_impl,
+            transfer_focus_region as _transfer_focus_region_impl,
+        )
+        from onset_editor_workbench_dialogs import (
+            OnsetManagerDialog as _ExtractedOnsetManagerDialog,
+            _DetectOnsetsDialog as _ExtractedDetectOnsetsDialog,
+            _LayerCheckboxMenu as _ExtractedLayerCheckboxMenu,
+            _LoadSelectionsDialog as _ExtractedLoadSelectionsDialog,
+            _MfccAudioEditDialog as _ExtractedMfccAudioEditDialog,
+            _NegativeSubtractionDialog as _ExtractedNegativeSubtractionDialog,
+            _PerSignalConfigDialog as _ExtractedPerSignalConfigDialog,
+            _SaveSelectionsDialog as _ExtractedSaveSelectionsDialog,
+            _default_signal_export_dirs as _default_signal_export_dirs_impl,
+        )
+    except ImportError:
+        from GUI.onset_editor_analysis import (
+            _analyze_focus_region_settings as _analyze_focus_region_settings_impl,
+            _build_per_signal_variable_checks as _build_per_signal_variable_checks_impl,
+            _build_focus_signal_profile as _build_focus_signal_profile_impl,
+            _build_signal_profile_from_saved_dirs as _build_signal_profile_from_saved_dirs_impl,
+            _build_region_detector_kwargs as _build_region_detector_kwargs_impl,
+            _build_uniform_probe_times as _build_uniform_probe_times_impl,
+            _candidate_peak_times_for_region as _candidate_peak_times_for_region_impl,
+            _compute_per_signal_spectral_threshold as _compute_per_signal_spectral_threshold_impl,
+            _compute_per_signal_variable_score_threshold as _compute_per_signal_variable_score_threshold_impl,
+            _compute_spectral_similarity_at_time as _compute_spectral_similarity_at_time_impl,
+            _diagnose_candidate_matches as _diagnose_candidate_matches_impl,
+            _evaluate_exemplar_self_check as _evaluate_exemplar_self_check_impl,
+            _extract_recommended_detect_settings as _extract_recommended_detect_settings_impl,
+            _format_match_miss_reason as _format_match_miss_reason_impl,
+            _merge_negative_detection_hits as _merge_negative_detection_hits_impl,
+            _recover_focus_region_onset as _recover_focus_region_onset_impl,
+            _region_contains_onset as _region_contains_onset_impl,
+            _score_onsets_by_variable_match as _score_onsets_by_variable_match_impl,
+            _summarize_signal_region_analyses as _summarize_signal_region_analyses_impl,
+        )
+        from GUI.onset_editor_detection import _DetectOnsetsWorker as _ExtractedDetectOnsetsWorker
+        from GUI.onset_editor_dialogs import (
+            _AnalyzeSignalsDialog as _ExtractedAnalyzeSignalsDialog,
+            _ExcelColumnDialog as _ExtractedExcelColumnDialog,
+            _ExcelSaveDialog as _ExtractedExcelSaveDialog,
+            _OnsetEditorSettingsDialog,
+        )
+        from GUI.onset_editor_io import (
+            _HOTKEY_DEFS,
+            _HAS_EXCEL_IO,
+            _build_load_selections_request as _build_load_selections_request_impl,
+            _extract_region_audio as _extract_region_audio_impl,
+            _export_selections_audio as _export_selections_audio_impl,
+            _eio,
+            _find_label_file,
+            _get_hotkey_map,
+            _list_audio_files,
+            _load_hotkey_overrides,
+            _load_labels,
+            _load_muter_presets,
+            _load_saved_selections as _load_saved_selections_impl,
+            _next_export_number as _next_export_number_impl,
+            _read_selection_manifest,
+            _review_audio_paths,
+            _regions_from_manifests,
+            _resolve_restored_file_selection,
+            _load_saved_onset_session_for_audio,
+            _save_hotkey_overrides,
+            _save_labels,
+            _selection_manifest_filename,
+            _summarize_load_selections_error as _summarize_load_selections_error_impl,
+            _write_selection_manifest,
+            _write_focus_regions_json as _write_focus_regions_json_impl,
+            _write_onset_layer_settings as _write_onset_layer_settings_impl,
+        )
+        from GUI.onset_editor_state import (
+            OnsetLayerState as _OnsetLayerState,
+            _UndoStack,
+            add_shared_comparison_onsets as _add_shared_comparison_onsets_impl,
+            add_unique_comparison_onsets as _add_unique_comparison_onsets_impl,
+            activate_layer_range as _activate_layer_range_impl,
+            append_empty_layer as _append_empty_layer_impl,
+            append_layer_state as _append_layer_state_impl,
+            append_merged_layer as _append_merged_layer_impl,
+            build_panel_config_snapshot as _build_panel_config_snapshot_impl,
+            build_loaded_onset_session as _build_loaded_onset_session_impl,
+            build_save_selections_export_plan as _build_save_selections_export_plan_impl,
+            build_comparison_display_state as _build_comparison_display_state_impl,
+            classify_comparison_onsets as _classify_comparison_onsets_impl,
+            compute_ioi as _compute_ioi_impl,
+            compute_rk as _compute_rk_impl,
+            compute_stable as _compute_stable_impl,
+            deserialize_layers as _deserialize_layer_states,
+            extract_scalar_config_restore_values as _extract_scalar_config_restore_values_impl,
+            format_checked_layer_label as _format_checked_layer_label_impl,
+            filter_removed_onsets as _filter_removed_onsets_impl,
+            hydrate_layer_state as _hydrate_layer_state,
+            load_layer_state as _load_active_layer_state,
+            make_default_layer as _make_default_layer_state,
+            merge_onsets as _merge_onsets_impl,
+            build_layer_overlay_markers as _build_layer_overlay_markers_impl,
+            remove_active_layer as _remove_active_layer_impl,
+            remove_main_only_onsets as _remove_main_only_onsets_impl,
+            remove_onsets_in_range as _remove_onsets_in_range_impl,
+            restore_configured_layers as _restore_configured_layers_impl,
+            reset_layers_for_loaded_file as _reset_layers_for_loaded_file_impl,
+            restore_loaded_focus_regions as _restore_loaded_focus_regions_impl,
+            serialize_layers as _serialize_layer_states,
+            save_layer_state as _save_active_layer_state,
+            select_exclusive_layer as _select_exclusive_layer_impl,
+            summarize_loaded_selections_feedback as _summarize_loaded_selections_feedback_impl,
+            summarize_save_selections_preflight as _summarize_save_selections_preflight_impl,
+            summarize_focus_region_status as _summarize_focus_region_status_impl,
+            summarize_focus_restore_state as _summarize_focus_restore_state_impl,
+            summarize_review_finish_state as _summarize_review_finish_state_impl,
+            summarize_review_navigation_state as _summarize_review_navigation_state_impl,
+            summarize_layer_selection_change as _summarize_layer_selection_change_impl,
+            switch_active_layer as _switch_active_layer_impl,
+            transfer_focus_region as _transfer_focus_region_impl,
+        )
+        from GUI.onset_editor_workbench_dialogs import (
+            OnsetManagerDialog as _ExtractedOnsetManagerDialog,
+            _DetectOnsetsDialog as _ExtractedDetectOnsetsDialog,
+            _LayerCheckboxMenu as _ExtractedLayerCheckboxMenu,
+            _LoadSelectionsDialog as _ExtractedLoadSelectionsDialog,
+            _MfccAudioEditDialog as _ExtractedMfccAudioEditDialog,
+            _NegativeSubtractionDialog as _ExtractedNegativeSubtractionDialog,
+            _PerSignalConfigDialog as _ExtractedPerSignalConfigDialog,
+            _SaveSelectionsDialog as _ExtractedSaveSelectionsDialog,
+            _default_signal_export_dirs as _default_signal_export_dirs_impl,
+        )
+    
+    
+    def _monospace_css_family() -> str:
+        system = platform.system()
+        if system == "Darwin":
+            return "Menlo"
+        if system == "Windows":
+            return "Consolas"
+        return "DejaVu Sans Mono"
+    
+    # ---------------------------------------------------------------------------
+    # AudioViewerWidget import (same approach as pipeline_gui.py)
+    # ---------------------------------------------------------------------------
+    try:
+>       from audio_viewer import AudioViewerWidget as _AudioViewerWidget
+
+GUI/onset_editor.py:309: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """
+    AudioViewerWidget — GPU-accelerated audio viewer for the Bioacoustics Rhythm Pipeline.
+    
+    Provides waveform + spectrogram display using pyqtgraph, with audio playback,
+    onset marker overlays, region selection, and chunk navigation.  Designed to
+    replace the slow matplotlib-based viewers (AudioPreviewWindow, SpectrogramSelector,
+    OnsetSelector) with a single high-performance, reusable component.
+    
+    Dependencies: PyQt6, pyqtgraph, numpy, librosa.
+    Optional: sounddevice (for playback).
+    """
+    
+    from __future__ import annotations
+    
+    import platform
+    import threading
+    import time
+    from typing import Any, List, Optional, Tuple
+    
+    import numpy as np
+    
+    from PyQt6.QtCore import (
+        QObject,
+        QTimer,
+        Qt,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt6.QtGui import QColor, QFont, QKeyEvent, QAction
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMenu,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+    
+>   import pyqtgraph as pg
+E   ModuleNotFoundError: No module named 'pyqtgraph'
+
+GUI/audio_viewer.py:45: ModuleNotFoundError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_excel_onset_io.TestBackwardCompatibility object at 0x17edef350>
+
+    def test_save_labels_still_works(self):
+>       from onset_editor import _save_labels
+
+tests/test_excel_onset_io.py:525: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+GUI/onset_editor.py:311: in <module>
+    from GUI.audio_viewer import AudioViewerWidget as _AudioViewerWidget
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """
+    AudioViewerWidget — GPU-accelerated audio viewer for the Bioacoustics Rhythm Pipeline.
+    
+    Provides waveform + spectrogram display using pyqtgraph, with audio playback,
+    onset marker overlays, region selection, and chunk navigation.  Designed to
+    replace the slow matplotlib-based viewers (AudioPreviewWindow, SpectrogramSelector,
+    OnsetSelector) with a single high-performance, reusable component.
+    
+    Dependencies: PyQt6, pyqtgraph, numpy, librosa.
+    Optional: sounddevice (for playback).
+    """
+    
+    from __future__ import annotations
+    
+    import platform
+    import threading
+    import time
+    from typing import Any, List, Optional, Tuple
+    
+    import numpy as np
+    
+    from PyQt6.QtCore import (
+        QObject,
+        QTimer,
+        Qt,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt6.QtGui import QColor, QFont, QKeyEvent, QAction
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMenu,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+    
+>   import pyqtgraph as pg
+E   ModuleNotFoundError: No module named 'pyqtgraph'
+
+GUI/audio_viewer.py:45: ModuleNotFoundError
+__________ TestBackwardCompatibility.test_find_label_file_still_works __________
+
+    """
+    OnsetEditorPanel — Interactive onset editing panel for the Bioacoustics Rhythm Pipeline.
+    
+    Provides a full onset editing workflow:
+    - File browser (folder picker + file combo)
+    - AudioViewerWidget (waveform + spectrogram with draggable onset markers)
+    - Editable QTableWidget showing onset times, IOIs, r_k, stable flag
+    - Toolbar with Add/Remove/Save, Undo/Redo
+    - Load/Save Audacity label files and Excel
+    
+    Dependencies: PyQt6, numpy, audio_viewer (AudioViewerWidget).
+    Optional: openpyxl (for Excel I/O), librosa (for audio loading).
+    """
+    
+    from __future__ import annotations
+    
+    import copy
+    import json
+    import os
+    import platform
+    import re
+    import sys
+    from typing import List, Optional
+    
+    import librosa
+    import numpy as np
+    import pandas as pd
+    
+    from PyQt6.QtCore import Qt, QThread, QTimer, pyqtSignal
+    from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
+    from PyQt6.QtWidgets import (
+        QAbstractItemView,
+        QApplication,
+        QButtonGroup,
+        QCheckBox,
+        QColorDialog,
+        QComboBox,
+        QDialog,
+        QDialogButtonBox,
+        QDoubleSpinBox,
+        QFileDialog,
+        QFrame,
+        QGroupBox,
+        QHBoxLayout,
+        QHeaderView,
+        QLabel,
+        QLineEdit,
+        QListWidget,
+        QMenu,
+        QMessageBox,
+        QPlainTextEdit,
+        QProgressDialog,
+        QPushButton,
+        QRadioButton,
+        QScrollArea,
+        QSizePolicy,
+        QSlider,
+        QSpinBox,
+        QSplitter,
+        QTableWidget,
+        QTableWidgetItem,
+        QToolButton,
+        QVBoxLayout,
+        QWidget,
+        QWidgetAction,
+    )
+    
+    try:
+        from onset_editor_analysis import (
+            _analyze_focus_region_settings as _analyze_focus_region_settings_impl,
+            _build_per_signal_variable_checks as _build_per_signal_variable_checks_impl,
+            _build_focus_signal_profile as _build_focus_signal_profile_impl,
+            _build_signal_profile_from_saved_dirs as _build_signal_profile_from_saved_dirs_impl,
+            _build_region_detector_kwargs as _build_region_detector_kwargs_impl,
+            _build_uniform_probe_times as _build_uniform_probe_times_impl,
+            _candidate_peak_times_for_region as _candidate_peak_times_for_region_impl,
+            _compute_per_signal_spectral_threshold as _compute_per_signal_spectral_threshold_impl,
+            _compute_per_signal_variable_score_threshold as _compute_per_signal_variable_score_threshold_impl,
+            _compute_spectral_similarity_at_time as _compute_spectral_similarity_at_time_impl,
+            _diagnose_candidate_matches as _diagnose_candidate_matches_impl,
+            _evaluate_exemplar_self_check as _evaluate_exemplar_self_check_impl,
+            _extract_recommended_detect_settings as _extract_recommended_detect_settings_impl,
+            _format_match_miss_reason as _format_match_miss_reason_impl,
+            _merge_negative_detection_hits as _merge_negative_detection_hits_impl,
+            _recover_focus_region_onset as _recover_focus_region_onset_impl,
+            _region_contains_onset as _region_contains_onset_impl,
+            _score_onsets_by_variable_match as _score_onsets_by_variable_match_impl,
+            _summarize_signal_region_analyses as _summarize_signal_region_analyses_impl,
+        )
+        from onset_editor_detection import _DetectOnsetsWorker as _ExtractedDetectOnsetsWorker
+        from onset_editor_dialogs import (
+            _AnalyzeSignalsDialog as _ExtractedAnalyzeSignalsDialog,
+            _ExcelColumnDialog as _ExtractedExcelColumnDialog,
+            _ExcelSaveDialog as _ExtractedExcelSaveDialog,
+            _OnsetEditorSettingsDialog,
+        )
+        from onset_editor_io import (
+            _HOTKEY_DEFS,
+            _HAS_EXCEL_IO,
+            _build_load_selections_request as _build_load_selections_request_impl,
+            _extract_region_audio as _extract_region_audio_impl,
+            _export_selections_audio as _export_selections_audio_impl,
+            _eio,
+            _find_label_file,
+            _get_hotkey_map,
+            _list_audio_files,
+            _load_hotkey_overrides,
+            _load_labels,
+            _load_muter_presets,
+            _load_saved_selections as _load_saved_selections_impl,
+            _next_export_number as _next_export_number_impl,
+            _read_selection_manifest,
+            _review_audio_paths,
+            _regions_from_manifests,
+            _resolve_restored_file_selection,
+            _load_saved_onset_session_for_audio,
+            _save_hotkey_overrides,
+            _save_labels,
+            _selection_manifest_filename,
+            _summarize_load_selections_error as _summarize_load_selections_error_impl,
+            _write_audio_file,
+            _write_selection_manifest,
+            _write_focus_regions_json as _write_focus_regions_json_impl,
+            _write_onset_layer_settings as _write_onset_layer_settings_impl,
+        )
+        from onset_editor_state import (
+            OnsetLayerState as _OnsetLayerState,
+            _UndoStack,
+            add_shared_comparison_onsets as _add_shared_comparison_onsets_impl,
+            add_unique_comparison_onsets as _add_unique_comparison_onsets_impl,
+            activate_layer_range as _activate_layer_range_impl,
+            append_empty_layer as _append_empty_layer_impl,
+            append_layer_state as _append_layer_state_impl,
+            append_merged_layer as _append_merged_layer_impl,
+            build_panel_config_snapshot as _build_panel_config_snapshot_impl,
+            build_loaded_onset_session as _build_loaded_onset_session_impl,
+            build_save_selections_export_plan as _build_save_selections_export_plan_impl,
+            build_comparison_display_state as _build_comparison_display_state_impl,
+            classify_comparison_onsets as _classify_comparison_onsets_impl,
+            compute_ioi as _compute_ioi_impl,
+            compute_rk as _compute_rk_impl,
+            compute_stable as _compute_stable_impl,
+            deserialize_layers as _deserialize_layer_states,
+            extract_scalar_config_restore_values as _extract_scalar_config_restore_values_impl,
+            format_checked_layer_label as _format_checked_layer_label_impl,
+            filter_removed_onsets as _filter_removed_onsets_impl,
+            hydrate_layer_state as _hydrate_layer_state,
+            load_layer_state as _load_active_layer_state,
+            make_default_layer as _make_default_layer_state,
+            merge_onsets as _merge_onsets_impl,
+            build_layer_overlay_markers as _build_layer_overlay_markers_impl,
+            remove_active_layer as _remove_active_layer_impl,
+            remove_main_only_onsets as _remove_main_only_onsets_impl,
+            remove_onsets_in_range as _remove_onsets_in_range_impl,
+            restore_configured_layers as _restore_configured_layers_impl,
+            reset_layers_for_loaded_file as _reset_layers_for_loaded_file_impl,
+            restore_loaded_focus_regions as _restore_loaded_focus_regions_impl,
+            serialize_layers as _serialize_layer_states,
+            save_layer_state as _save_active_layer_state,
+            select_exclusive_layer as _select_exclusive_layer_impl,
+            summarize_loaded_selections_feedback as _summarize_loaded_selections_feedback_impl,
+            summarize_save_selections_preflight as _summarize_save_selections_preflight_impl,
+            summarize_focus_region_status as _summarize_focus_region_status_impl,
+            summarize_focus_restore_state as _summarize_focus_restore_state_impl,
+            summarize_review_finish_state as _summarize_review_finish_state_impl,
+            summarize_review_navigation_state as _summarize_review_navigation_state_impl,
+            summarize_layer_selection_change as _summarize_layer_selection_change_impl,
+            switch_active_layer as _switch_active_layer_impl,
+            transfer_focus_region as _transfer_focus_region_impl,
+        )
+        from onset_editor_workbench_dialogs import (
+            OnsetManagerDialog as _ExtractedOnsetManagerDialog,
+            _DetectOnsetsDialog as _ExtractedDetectOnsetsDialog,
+            _LayerCheckboxMenu as _ExtractedLayerCheckboxMenu,
+            _LoadSelectionsDialog as _ExtractedLoadSelectionsDialog,
+            _MfccAudioEditDialog as _ExtractedMfccAudioEditDialog,
+            _NegativeSubtractionDialog as _ExtractedNegativeSubtractionDialog,
+            _PerSignalConfigDialog as _ExtractedPerSignalConfigDialog,
+            _SaveSelectionsDialog as _ExtractedSaveSelectionsDialog,
+            _default_signal_export_dirs as _default_signal_export_dirs_impl,
+        )
+    except ImportError:
+        from GUI.onset_editor_analysis import (
+            _analyze_focus_region_settings as _analyze_focus_region_settings_impl,
+            _build_per_signal_variable_checks as _build_per_signal_variable_checks_impl,
+            _build_focus_signal_profile as _build_focus_signal_profile_impl,
+            _build_signal_profile_from_saved_dirs as _build_signal_profile_from_saved_dirs_impl,
+            _build_region_detector_kwargs as _build_region_detector_kwargs_impl,
+            _build_uniform_probe_times as _build_uniform_probe_times_impl,
+            _candidate_peak_times_for_region as _candidate_peak_times_for_region_impl,
+            _compute_per_signal_spectral_threshold as _compute_per_signal_spectral_threshold_impl,
+            _compute_per_signal_variable_score_threshold as _compute_per_signal_variable_score_threshold_impl,
+            _compute_spectral_similarity_at_time as _compute_spectral_similarity_at_time_impl,
+            _diagnose_candidate_matches as _diagnose_candidate_matches_impl,
+            _evaluate_exemplar_self_check as _evaluate_exemplar_self_check_impl,
+            _extract_recommended_detect_settings as _extract_recommended_detect_settings_impl,
+            _format_match_miss_reason as _format_match_miss_reason_impl,
+            _merge_negative_detection_hits as _merge_negative_detection_hits_impl,
+            _recover_focus_region_onset as _recover_focus_region_onset_impl,
+            _region_contains_onset as _region_contains_onset_impl,
+            _score_onsets_by_variable_match as _score_onsets_by_variable_match_impl,
+            _summarize_signal_region_analyses as _summarize_signal_region_analyses_impl,
+        )
+        from GUI.onset_editor_detection import _DetectOnsetsWorker as _ExtractedDetectOnsetsWorker
+        from GUI.onset_editor_dialogs import (
+            _AnalyzeSignalsDialog as _ExtractedAnalyzeSignalsDialog,
+            _ExcelColumnDialog as _ExtractedExcelColumnDialog,
+            _ExcelSaveDialog as _ExtractedExcelSaveDialog,
+            _OnsetEditorSettingsDialog,
+        )
+        from GUI.onset_editor_io import (
+            _HOTKEY_DEFS,
+            _HAS_EXCEL_IO,
+            _build_load_selections_request as _build_load_selections_request_impl,
+            _extract_region_audio as _extract_region_audio_impl,
+            _export_selections_audio as _export_selections_audio_impl,
+            _eio,
+            _find_label_file,
+            _get_hotkey_map,
+            _list_audio_files,
+            _load_hotkey_overrides,
+            _load_labels,
+            _load_muter_presets,
+            _load_saved_selections as _load_saved_selections_impl,
+            _next_export_number as _next_export_number_impl,
+            _read_selection_manifest,
+            _review_audio_paths,
+            _regions_from_manifests,
+            _resolve_restored_file_selection,
+            _load_saved_onset_session_for_audio,
+            _save_hotkey_overrides,
+            _save_labels,
+            _selection_manifest_filename,
+            _summarize_load_selections_error as _summarize_load_selections_error_impl,
+            _write_selection_manifest,
+            _write_focus_regions_json as _write_focus_regions_json_impl,
+            _write_onset_layer_settings as _write_onset_layer_settings_impl,
+        )
+        from GUI.onset_editor_state import (
+            OnsetLayerState as _OnsetLayerState,
+            _UndoStack,
+            add_shared_comparison_onsets as _add_shared_comparison_onsets_impl,
+            add_unique_comparison_onsets as _add_unique_comparison_onsets_impl,
+            activate_layer_range as _activate_layer_range_impl,
+            append_empty_layer as _append_empty_layer_impl,
+            append_layer_state as _append_layer_state_impl,
+            append_merged_layer as _append_merged_layer_impl,
+            build_panel_config_snapshot as _build_panel_config_snapshot_impl,
+            build_loaded_onset_session as _build_loaded_onset_session_impl,
+            build_save_selections_export_plan as _build_save_selections_export_plan_impl,
+            build_comparison_display_state as _build_comparison_display_state_impl,
+            classify_comparison_onsets as _classify_comparison_onsets_impl,
+            compute_ioi as _compute_ioi_impl,
+            compute_rk as _compute_rk_impl,
+            compute_stable as _compute_stable_impl,
+            deserialize_layers as _deserialize_layer_states,
+            extract_scalar_config_restore_values as _extract_scalar_config_restore_values_impl,
+            format_checked_layer_label as _format_checked_layer_label_impl,
+            filter_removed_onsets as _filter_removed_onsets_impl,
+            hydrate_layer_state as _hydrate_layer_state,
+            load_layer_state as _load_active_layer_state,
+            make_default_layer as _make_default_layer_state,
+            merge_onsets as _merge_onsets_impl,
+            build_layer_overlay_markers as _build_layer_overlay_markers_impl,
+            remove_active_layer as _remove_active_layer_impl,
+            remove_main_only_onsets as _remove_main_only_onsets_impl,
+            remove_onsets_in_range as _remove_onsets_in_range_impl,
+            restore_configured_layers as _restore_configured_layers_impl,
+            reset_layers_for_loaded_file as _reset_layers_for_loaded_file_impl,
+            restore_loaded_focus_regions as _restore_loaded_focus_regions_impl,
+            serialize_layers as _serialize_layer_states,
+            save_layer_state as _save_active_layer_state,
+            select_exclusive_layer as _select_exclusive_layer_impl,
+            summarize_loaded_selections_feedback as _summarize_loaded_selections_feedback_impl,
+            summarize_save_selections_preflight as _summarize_save_selections_preflight_impl,
+            summarize_focus_region_status as _summarize_focus_region_status_impl,
+            summarize_focus_restore_state as _summarize_focus_restore_state_impl,
+            summarize_review_finish_state as _summarize_review_finish_state_impl,
+            summarize_review_navigation_state as _summarize_review_navigation_state_impl,
+            summarize_layer_selection_change as _summarize_layer_selection_change_impl,
+            switch_active_layer as _switch_active_layer_impl,
+            transfer_focus_region as _transfer_focus_region_impl,
+        )
+        from GUI.onset_editor_workbench_dialogs import (
+            OnsetManagerDialog as _ExtractedOnsetManagerDialog,
+            _DetectOnsetsDialog as _ExtractedDetectOnsetsDialog,
+            _LayerCheckboxMenu as _ExtractedLayerCheckboxMenu,
+            _LoadSelectionsDialog as _ExtractedLoadSelectionsDialog,
+            _MfccAudioEditDialog as _ExtractedMfccAudioEditDialog,
+            _NegativeSubtractionDialog as _ExtractedNegativeSubtractionDialog,
+            _PerSignalConfigDialog as _ExtractedPerSignalConfigDialog,
+            _SaveSelectionsDialog as _ExtractedSaveSelectionsDialog,
+            _default_signal_export_dirs as _default_signal_export_dirs_impl,
+        )
+    
+    
+    def _monospace_css_family() -> str:
+        system = platform.system()
+        if system == "Darwin":
+            return "Menlo"
+        if system == "Windows":
+            return "Consolas"
+        return "DejaVu Sans Mono"
+    
+    # ---------------------------------------------------------------------------
+    # AudioViewerWidget import (same approach as pipeline_gui.py)
+    # ---------------------------------------------------------------------------
+    try:
+>       from audio_viewer import AudioViewerWidget as _AudioViewerWidget
+
+GUI/onset_editor.py:309: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """
+    AudioViewerWidget — GPU-accelerated audio viewer for the Bioacoustics Rhythm Pipeline.
+    
+    Provides waveform + spectrogram display using pyqtgraph, with audio playback,
+    onset marker overlays, region selection, and chunk navigation.  Designed to
+    replace the slow matplotlib-based viewers (AudioPreviewWindow, SpectrogramSelector,
+    OnsetSelector) with a single high-performance, reusable component.
+    
+    Dependencies: PyQt6, pyqtgraph, numpy, librosa.
+    Optional: sounddevice (for playback).
+    """
+    
+    from __future__ import annotations
+    
+    import platform
+    import threading
+    import time
+    from typing import Any, List, Optional, Tuple
+    
+    import numpy as np
+    
+    from PyQt6.QtCore import (
+        QObject,
+        QTimer,
+        Qt,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt6.QtGui import QColor, QFont, QKeyEvent, QAction
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMenu,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+    
+>   import pyqtgraph as pg
+E   ModuleNotFoundError: No module named 'pyqtgraph'
+
+GUI/audio_viewer.py:45: ModuleNotFoundError
+
+During handling of the above exception, another exception occurred:
+
+self = <test_excel_onset_io.TestBackwardCompatibility object at 0x17edeef30>
+
+    def test_find_label_file_still_works(self):
+>       from onset_editor import _find_label_file
+
+tests/test_excel_onset_io.py:538: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+GUI/onset_editor.py:311: in <module>
+    from GUI.audio_viewer import AudioViewerWidget as _AudioViewerWidget
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    """
+    AudioViewerWidget — GPU-accelerated audio viewer for the Bioacoustics Rhythm Pipeline.
+    
+    Provides waveform + spectrogram display using pyqtgraph, with audio playback,
+    onset marker overlays, region selection, and chunk navigation.  Designed to
+    replace the slow matplotlib-based viewers (AudioPreviewWindow, SpectrogramSelector,
+    OnsetSelector) with a single high-performance, reusable component.
+    
+    Dependencies: PyQt6, pyqtgraph, numpy, librosa.
+    Optional: sounddevice (for playback).
+    """
+    
+    from __future__ import annotations
+    
+    import platform
+    import threading
+    import time
+    from typing import Any, List, Optional, Tuple
+    
+    import numpy as np
+    
+    from PyQt6.QtCore import (
+        QObject,
+        QTimer,
+        Qt,
+        pyqtSignal,
+        pyqtSlot,
+    )
+    from PyQt6.QtGui import QColor, QFont, QKeyEvent, QAction
+    from PyQt6.QtWidgets import (
+        QCheckBox,
+        QComboBox,
+        QDoubleSpinBox,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMenu,
+        QPushButton,
+        QSlider,
+        QSpinBox,
+        QVBoxLayout,
+        QWidget,
+    )
+    
+>   import pyqtgraph as pg
+E   ModuleNotFoundError: No module named 'pyqtgraph'
+
+GUI/audio_viewer.py:45: ModuleNotFoundError
+=========================== short test summary info ============================
+FAILED tests/test_excel_onset_io.py::TestBackwardCompatibility::test_load_labels_still_works
+FAILED tests/test_excel_onset_io.py::TestBackwardCompatibility::test_save_labels_still_works
+FAILED tests/test_excel_onset_io.py::TestBackwardCompatibility::test_find_label_file_still_works
+3 failed, 51 passed in 11.60s

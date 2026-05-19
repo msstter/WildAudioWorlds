@@ -72,6 +72,11 @@ try:
 except Exception:
     _ga_merge_demographics = None
 
+try:
+    from .shared_output_writers import save_matplotlib_figure, write_csv_dataframe, write_text_output
+except ImportError:
+    from shared_output_writers import save_matplotlib_figure, write_csv_dataframe, write_text_output
+
 
 # ==========================================================================
 # 1. CONFIGURATION (defaults — overridden by pipeline_config.json)
@@ -436,8 +441,8 @@ items_df = pd.DataFrame([
 
 rules_csv = os.path.join(output_folder, "association_rules.csv")
 items_csv = os.path.join(output_folder, "frequent_itemsets.csv")
-rules_df.to_csv(rules_csv, index=False)
-items_df.to_csv(items_csv, index=False)
+write_csv_dataframe(rules_csv, rules_df, index=False)
+write_csv_dataframe(items_csv, items_df, index=False)
 print(f"  → {rules_csv}")
 print(f"  → {items_csv}")
 
@@ -451,8 +456,7 @@ if rules_df.empty:
         f"min_confidence ≥ {ARL_MIN_CONFIDENCE}, min_lift ≥ {ARL_MIN_LIFT}.\n\n"
         "Try lowering them, adding more features, or using fewer bins.\n"
     )
-    with open(os.path.join(output_folder, "README.txt"), "w") as _fh:
-        _fh.write(_empty_readme)
+    write_text_output(os.path.join(output_folder, "README.txt"), _empty_readme)
     sys.exit(0)
 
 
@@ -472,7 +476,7 @@ def _save(fig, stem):
         exts = ["png"]
     for ext in exts:
         p = os.path.join(output_folder, f"{stem}.{ext}")
-        fig.savefig(p, dpi=ARL_DPI, facecolor=ARL_BG_COLOR, bbox_inches="tight")
+        save_matplotlib_figure(fig, p, dpi=ARL_DPI, facecolor=ARL_BG_COLOR, bbox_inches="tight")
         print(f"  → {p}")
     plt.close(fig)
 
@@ -810,8 +814,7 @@ TROUBLESHOOTING
                           the run log).
 """
 
-with open(os.path.join(output_folder, "README.txt"), "w") as _fh:
-    _fh.write(_readme)
+write_text_output(os.path.join(output_folder, "README.txt"), _readme)
 print(f"  → {os.path.join(output_folder, 'README.txt')}")
 
 
@@ -842,6 +845,5 @@ _summary_lines += [
     "See README.txt for a full explanation of support / confidence /",
     "lift and a guide to every file in this folder.",
 ]
-with open(os.path.join(output_folder, "summary.txt"), "w") as _fh:
-    _fh.write("\n".join(_summary_lines))
+write_text_output(os.path.join(output_folder, "summary.txt"), "\n".join(_summary_lines))
 print(f"  → {os.path.join(output_folder, 'summary.txt')}")

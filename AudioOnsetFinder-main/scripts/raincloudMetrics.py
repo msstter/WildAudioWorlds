@@ -31,7 +31,7 @@ if _PROJECT_DIR not in sys.path:
 
 from group_assignment import (  # noqa: E402
     assign_groups, ensure_output_folder, get_palette, load_file_summaries,
-    order_groups, pick_rhythm_column, save_figure,
+    order_groups, pick_rhythm_column, save_figure, write_csv_dataframe,
 )
 
 # Defaults
@@ -304,7 +304,10 @@ for metric in metrics:
     plt.close(fig)
 
 if stats_rows:
-    pd.DataFrame(stats_rows).to_csv(
-        os.path.join(output_folder, "raincloud_stats.csv"), index=False)
+    write_csv_dataframe(
+        os.path.join(output_folder, "raincloud_stats.csv"),
+        pd.DataFrame(stats_rows),
+        index=False,
+    )
 
 print(f"[raincloudMetrics] Done — wrote {len(metrics)} figure(s) to {output_folder}")

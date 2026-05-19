@@ -237,12 +237,16 @@ def test_data_manager_publishes_source_audio_input_and_shared_write_helpers(tmp_
     text_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review.txt"
     json_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review.json"
     csv_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review.csv"
+    csv_with_index_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "review_with_index.csv"
     audio_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "selection.wav"
+    binary_path = tmp_path / "AudioOnsetFinder-main" / "outputs" / "plot.png"
 
     DataManager.write_text_file(text_path, "alpha\nbeta\n")
     DataManager.write_json_file(json_path, {"ok": True, "count": 2})
     DataManager.write_csv_dataframe(csv_path, pd.DataFrame({"value": [1, 2]}))
+    DataManager.write_csv_dataframe(csv_with_index_path, pd.DataFrame({"value": [3, 4]}), index=True)
     DataManager.write_audio_file(audio_path, np.array([0.0, 0.5, -0.5], dtype=np.float32), 16000)
+    DataManager.write_binary_file(binary_path, b"PNGDATA")
 
     assert source_audio_path.parent == tmp_path / "data" / "source_audio" / "recorded"
     assert source_audio_path.suffix == ".wav"
@@ -253,10 +257,13 @@ def test_data_manager_publishes_source_audio_input_and_shared_write_helpers(tmp_
     with json_path.open("r", encoding="utf-8") as handle:
         assert json.load(handle) == {"ok": True, "count": 2}
     assert csv_path.read_text(encoding="utf-8").splitlines() == ["value", "1", "2"]
+    assert csv_with_index_path.read_text(encoding="utf-8").splitlines() == [",value", "0,3", "1,4"]
+    assert binary_path.read_bytes() == b"PNGDATA"
 
     with wave.open(str(audio_path), "rb") as wav_file:
         assert wav_file.getframerate() == 16000
         assert wav_file.getnframes() == 3
+
 
 
 def test_import_recorded_audio_routes_base64_source_publication_through_data_manager(tmp_path, monkeypatch):

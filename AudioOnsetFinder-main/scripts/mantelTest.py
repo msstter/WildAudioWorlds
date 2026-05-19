@@ -33,7 +33,7 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_DIR, "scripts"))
 
-from group_assignment import ensure_output_folder, get_palette, load_file_summaries, save_figure  # noqa: E402
+from group_assignment import ensure_output_folder, get_palette, load_file_summaries, save_figure, write_csv_dataframe  # noqa: E402
 
 excel_path = os.path.join(_PROJECT_DIR, "Cross_Species_Rhythm_Data.xlsx")
 output_folder = os.path.join(_PROJECT_DIR, "Mantel_Test")
@@ -142,7 +142,7 @@ else:
     rhy_d = np.abs(vals[:, None] - vals[None, :])
 
 rhy_df = pd.DataFrame(rhy_d, index=units, columns=units)
-rhy_df.to_csv(os.path.join(output_folder, "distance_matrices", "rhythmic.csv"))
+write_csv_dataframe(os.path.join(output_folder, "distance_matrices", "rhythmic.csv"), rhy_df, index=True)
 
 
 # ------------------------------------------------------------------
@@ -191,8 +191,11 @@ def _build_geo_matrix(df_summary, units):
 
 geo_d = _build_geo_matrix(df_summary, units)
 if geo_d is not None:
-    pd.DataFrame(geo_d, index=units, columns=units).to_csv(
-        os.path.join(output_folder, "distance_matrices", "geographic.csv"))
+    write_csv_dataframe(
+        os.path.join(output_folder, "distance_matrices", "geographic.csv"),
+        pd.DataFrame(geo_d, index=units, columns=units),
+        index=True,
+    )
 
 
 # ------------------------------------------------------------------
@@ -233,8 +236,11 @@ def _build_phylo_matrix(units):
 
 phylo_d = _build_phylo_matrix(units)
 if phylo_d is not None:
-    pd.DataFrame(phylo_d, index=units, columns=units).to_csv(
-        os.path.join(output_folder, "distance_matrices", "phylogenetic.csv"))
+    write_csv_dataframe(
+        os.path.join(output_folder, "distance_matrices", "phylogenetic.csv"),
+        pd.DataFrame(phylo_d, index=units, columns=units),
+        index=True,
+    )
 
 
 # ------------------------------------------------------------------
@@ -347,7 +353,7 @@ if MANTEL_TEST_MODE == "partial" and len(matrices) >= 3:
                          "n_permutations": int(MANTEL_N_PERMUTATIONS)})
 
 res_df = pd.DataFrame(rows)
-res_df.to_csv(os.path.join(output_folder, "mantel_results.csv"), index=False)
+write_csv_dataframe(os.path.join(output_folder, "mantel_results.csv"), res_df, index=False)
 print(res_df.to_string(index=False))
 
 # Scatter plots for each pair (two-matrix only)

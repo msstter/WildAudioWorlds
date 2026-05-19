@@ -49,6 +49,11 @@ from analysis.signal_profiles import (
     compute_spectrogram as _compute_spectrogram_impl,
 )
 
+try:
+    from .shared_output_writers import write_text_output
+except ImportError:
+    from shared_output_writers import write_text_output
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Core analysis helpers
@@ -1395,18 +1400,26 @@ class OnsetSelector:
         if all_pos:
             pos_path = _unique_path(os.path.join(
                 out_dir, f"{base_name}_positive_onsets.txt"))
-            with open(pos_path, "w") as f:
-                for i, t in enumerate(all_pos, 1):
-                    f.write(f"{t:.6f}\t{t:.6f}\tOnsetPos_{i}\n")
+            write_text_output(
+                pos_path,
+                "".join(
+                    f"{t:.6f}\t{t:.6f}\tOnsetPos_{i}\n"
+                    for i, t in enumerate(all_pos, 1)
+                ),
+            )
             print(f"  Saved: {pos_path}")
             saved += 1
 
         if all_neg:
             neg_path = _unique_path(os.path.join(
                 out_dir, f"{base_name}_negative_onsets.txt"))
-            with open(neg_path, "w") as f:
-                for i, t in enumerate(all_neg, 1):
-                    f.write(f"{t:.6f}\t{t:.6f}\tOnsetNeg_{i}\n")
+            write_text_output(
+                neg_path,
+                "".join(
+                    f"{t:.6f}\t{t:.6f}\tOnsetNeg_{i}\n"
+                    for i, t in enumerate(all_neg, 1)
+                ),
+            )
             print(f"  Saved: {neg_path}")
             saved += 1
 
@@ -1714,8 +1727,7 @@ def main():
         base = os.path.splitext(args.audio_file)[0]
         out_path = f"{base}_signal_profile.json"
 
-    with open(out_path, "w") as f:
-        json.dump(profile, f, indent=2)
+    write_text_output(out_path, json.dumps(profile, indent=2))
 
     n = profile.get("summary", {}).get("n_regions", 0)
     print(f"\nSignal profile saved to {out_path}")

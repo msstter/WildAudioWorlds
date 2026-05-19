@@ -26,7 +26,7 @@ if _PROJECT_DIR not in sys.path:
 
 from group_assignment import (  # noqa: E402
     assign_groups, ensure_output_folder, get_palette, load_dyadic_events,
-    load_file_summaries, order_groups, save_figure,
+    load_file_summaries, order_groups, save_figure, write_csv_dataframe,
 )
 
 # Defaults
@@ -300,13 +300,15 @@ if AC_GROUP_AGGREGATION == "pooled_by_group" and not res_df.empty:
             "r_lag1_zmean": r_mean, "CI_low": ci_lo, "CI_high": ci_hi,
         })
     if group_rows:
-        pd.DataFrame(group_rows).to_csv(
+        write_csv_dataframe(
             os.path.join(output_folder, "autocorr_lag1_group_summary.csv"),
-            index=False)
+            pd.DataFrame(group_rows),
+            index=False,
+        )
         print("[lagOneAutocorrelation] wrote autocorr_lag1_group_summary.csv")
 
 csv_path = os.path.join(output_folder, "autocorr_lag1.csv")
-res_df.to_csv(csv_path, index=False)
+write_csv_dataframe(csv_path, res_df, index=False)
 print(f"[lagOneAutocorrelation] wrote {csv_path}")
 if not res_df.empty:
     print(res_df.groupby("Group")["r_lag1"].describe().to_string())

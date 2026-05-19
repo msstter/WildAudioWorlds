@@ -27,7 +27,7 @@ if _PROJECT_DIR not in sys.path:
 
 from group_assignment import (  # noqa: E402
     assign_groups, ensure_output_folder, get_palette, load_dyadic_events,
-    load_file_summaries, order_groups, save_figure,
+    load_file_summaries, order_groups, save_figure, write_csv_dataframe,
 )
 
 # Defaults
@@ -211,7 +211,7 @@ res_df["significant"] = np.where(
 )
 
 csv_path = os.path.join(output_folder, "wilcoxon_isochrony_results.csv")
-res_df.to_csv(csv_path, index=False)
+write_csv_dataframe(csv_path, res_df, index=False)
 print(f"[wilcoxonIsochrony] wrote {csv_path}")
 print(res_df.to_string(index=False))
 

@@ -37,6 +37,20 @@ from thebeat import Sequence  # object-oriented IOI / rhythm sequence handler
 from onset_detectors import (detect_onsets, refine_onsets_to_sample, available_methods,
                              last_f0_metrics, last_madmom_tempo,
                              extract_pitch_metrics)
+try:
+    from .onset_exports import write_audacity_labels
+    from .shared_output_writers import (
+        save_matplotlib_figure,
+        save_openpyxl_workbook,
+        write_workbook_sheets,
+    )
+except ImportError:
+    from onset_exports import write_audacity_labels
+    from shared_output_writers import (
+        save_matplotlib_figure,
+        save_openpyxl_workbook,
+        write_workbook_sheets,
+    )
 
 # ==========================================
 # 1. CONFIGURATION
@@ -933,13 +947,12 @@ def main():
 
             # --- AUDACITY LABEL EXPORT ---
             if CREATE_AUDACITY_LABELS and len(clustered_onset_times) > 0:
-                label_filename = f"{os.path.splitext(filename)[0]}_labels.txt"
-                label_path = os.path.join(audio_folder, label_filename)
-                precision = 6 if ONSET_REFINE_ENABLED else 4
-                with open(label_path, "w") as file_handle:
-                    for idx, onset_time in enumerate(clustered_onset_times):
-                        tag = "Onset" if not ONSET_REFINE_ENABLED else "OnsetR"
-                        file_handle.write(f"{onset_time:.{precision}f}\t{onset_time:.{precision}f}\t{tag}_{idx + 1}\n")
+                write_audacity_labels(
+                    audio_folder,
+                    filename,
+                    clustered_onset_times,
+                    refine_enabled=ONSET_REFINE_ENABLED,
+                )
 
             # --- SPECTROGRAM VISUALIZER ---
             if CREATE_SPECTROGRAMS and len(clustered_onset_times) > 0:
@@ -984,7 +997,7 @@ def main():
                         label="Onsets",
                     )
                     image_path = os.path.join(audio_folder, image_filename)
-                    plt.savefig(image_path)
+                    save_matplotlib_figure(plt, image_path)
                     plt.close()
 
             # --- SAVE FILE SUMMARY DATA ---
@@ -1057,11 +1070,13 @@ def main():
     if _output_dir and not os.path.isdir(_output_dir):
         os.makedirs(_output_dir, exist_ok=True)
 
-    with pd.ExcelWriter(output_excel_path) as writer:
-        df_summary.to_excel(writer, sheet_name="File Summaries", index=False)
-        df_dyads.to_excel(writer, sheet_name="Dyadic Events (For Plots)", index=False)
-        if FILTER_STABLE_RHYTHMS:
-            df_stable_dyads.to_excel(writer, sheet_name="Dyadic Events (Stable Rhythms)", index=False)
+    workbook_sheets = {
+        "File Summaries": df_summary,
+        "Dyadic Events (For Plots)": df_dyads,
+    }
+    if FILTER_STABLE_RHYTHMS:
+        workbook_sheets["Dyadic Events (Stable Rhythms)"] = df_stable_dyads
+    write_workbook_sheets(output_excel_path, workbook_sheets)
 
     # --- Add explanatory comments to column headers ---
     if ADD_COLUMN_COMMENTS:
@@ -1126,7 +1141,7 @@ def main():
                 header_text = cell.value
                 if header_text and header_text in col_comments:
                     cell.comment = Comment(col_comments[header_text], _comment_author)
-        wb.save(output_excel_path)
+        save_openpyxl_workbook(wb, output_excel_path)
         print("Column header comments added to Excel file.")
 
     print(f"\nSUCCESS! Processed {len(file_summary_data)} files using 'thebeat' engine.")

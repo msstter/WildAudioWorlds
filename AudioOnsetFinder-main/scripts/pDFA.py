@@ -32,7 +32,7 @@ if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_DIR, "scripts"))
 
 from group_assignment import (  # noqa: E402
-    ensure_output_folder, get_palette, load_file_summaries, save_figure,
+    ensure_output_folder, get_palette, load_file_summaries, save_figure, write_csv_dataframe,
 )
 
 excel_path = os.path.join(_PROJECT_DIR, "Cross_Species_Rhythm_Data.xlsx")
@@ -241,14 +241,14 @@ res = pd.DataFrame([{
     "crossval": PDFA_CROSSVALIDATION,
     "repeated_measures": rm_col or "none",
 }])
-res.to_csv(os.path.join(output_folder, "pdfa_results.csv"), index=False)
+write_csv_dataframe(os.path.join(output_folder, "pdfa_results.csv"), res, index=False)
 
 # Confusion matrix
 cm = np.zeros((len(classes), len(classes)), dtype=int)
 for actual, predicted in zip(y_idx, pred):
     cm[actual, predicted] += 1
 cm_df = pd.DataFrame(cm, index=classes, columns=classes)
-cm_df.to_csv(os.path.join(output_folder, "pdfa_confusion_matrix.csv"))
+write_csv_dataframe(os.path.join(output_folder, "pdfa_confusion_matrix.csv"), cm_df, index=True)
 
 fig, ax = plt.subplots(figsize=(PDFA_FIG_WIDTH, PDFA_FIG_HEIGHT),
                        facecolor=PDFA_BG_COLOR, constrained_layout=True)
@@ -330,7 +330,7 @@ proj = X @ W[:, :2]
 loadings = pd.DataFrame(W[:, :min(2, W.shape[1])],
                         index=predictors,
                         columns=[f"LD{i+1}" for i in range(min(2, W.shape[1]))])
-loadings.to_csv(os.path.join(output_folder, "pdfa_loadings.csv"))
+write_csv_dataframe(os.path.join(output_folder, "pdfa_loadings.csv"), loadings, index=True)
 
 fig, ax = plt.subplots(figsize=(PDFA_FIG_WIDTH, PDFA_FIG_HEIGHT),
                        facecolor=PDFA_BG_COLOR, constrained_layout=True)

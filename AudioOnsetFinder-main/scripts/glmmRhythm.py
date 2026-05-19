@@ -34,7 +34,7 @@ _PROJECT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_DIR not in sys.path:
     sys.path.insert(0, os.path.join(_PROJECT_DIR, "scripts"))
 
-from group_assignment import ensure_output_folder, get_palette, load_file_summaries, save_figure  # noqa: E402
+from group_assignment import ensure_output_folder, get_palette, load_file_summaries, save_figure, write_csv_dataframe, write_text_output  # noqa: E402
 
 excel_path = os.path.join(_PROJECT_DIR, "Cross_Species_Rhythm_Data.xlsx")
 output_folder = os.path.join(_PROJECT_DIR, "GLMM")
@@ -225,13 +225,18 @@ except Exception as e:
     print(f"[glmmRhythm] Model fit failed: {e}")
     summary_text = f"Model fit failed: {e}\n"
 
-with open(os.path.join(output_folder, "glmm_summary.txt"), "w") as fh:
-    fh.write(summary_text)
-pd.DataFrame(coef_rows).to_csv(
-    os.path.join(output_folder, "glmm_coefficients.csv"), index=False)
+write_text_output(os.path.join(output_folder, "glmm_summary.txt"), summary_text)
+write_csv_dataframe(
+    os.path.join(output_folder, "glmm_coefficients.csv"),
+    pd.DataFrame(coef_rows),
+    index=False,
+)
 if random_rows:
-    pd.DataFrame(random_rows).to_csv(
-        os.path.join(output_folder, "glmm_random_effects.csv"), index=False)
+    write_csv_dataframe(
+        os.path.join(output_folder, "glmm_random_effects.csv"),
+        pd.DataFrame(random_rows),
+        index=False,
+    )
 
 # Forest plot
 if coef_rows:

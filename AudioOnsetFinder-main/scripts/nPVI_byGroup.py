@@ -42,6 +42,10 @@ try:
     from group_assignment import merge_file_demographics as _ga_merge_demographics  # noqa: E402
 except Exception:
     _ga_merge_demographics = None
+try:
+    from .shared_output_writers import save_matplotlib_figure
+except ImportError:
+    from shared_output_writers import save_matplotlib_figure
 excel_path = os.path.join(_PROJECT_DIR, "Cross_Species_Rhythm_Data.xlsx")
 output_folder = os.path.join(_PROJECT_DIR, "nPVI_Group_Plots")
 
@@ -417,8 +421,8 @@ def create_raincloud_plot(groups, group_data, colors, save_paths):
     plt.tight_layout(pad=NPVI_TIGHT_PAD)
 
     for sp in save_paths:
-        fig.savefig(sp, dpi=NPVI_DPI, facecolor=NPVI_BG_COLOR,
-                    bbox_inches="tight")
+        save_matplotlib_figure(fig, sp, dpi=NPVI_DPI, facecolor=NPVI_BG_COLOR,
+                               bbox_inches="tight")
         print(f"  Saved: {sp}")
     plt.close(fig)
 

@@ -24,6 +24,11 @@ import librosa
 import numpy as np
 from scipy.signal import butter, sosfilt
 
+try:
+    from .shared_output_writers import write_text_output
+except ImportError:
+    from shared_output_writers import write_text_output
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Analysis helpers
@@ -810,8 +815,7 @@ def main():
         base = os.path.splitext(args.input)[0] if os.path.isfile(args.input) else args.input.rstrip("/")
         out_path = f"{base}_audio_analysis.json"
 
-    with open(out_path, "w") as f:
-        json.dump(result, f, indent=2)
+    write_text_output(out_path, json.dumps(result, indent=2))
 
     # Print summary
     a = result["analysis"]

@@ -23,6 +23,11 @@ import matplotlib.pyplot as plt  # raster plot generation
 import matplotlib.ticker as ticker  # custom axis formatting for mirrored plot labels
 import pandas as pd  # read the Excel workbook and manipulate imported data
 
+try:
+    from .shared_output_writers import save_matplotlib_figure
+except ImportError:
+    from shared_output_writers import save_matplotlib_figure
+
 # ==========================================
 # 1. CONFIGURATION
 # ==========================================
@@ -345,7 +350,7 @@ def create_raster_plot(data, title, save_path):
     plt.gca().xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f"{abs(int(x))}"))
     
     plt.tight_layout(pad=RASTER_TIGHT_PAD)
-    plt.savefig(save_path, dpi=RASTER_DPI, facecolor=RASTER_BG_COLOR)
+    save_matplotlib_figure(plt, save_path, dpi=RASTER_DPI, facecolor=RASTER_BG_COLOR)
     plt.close()
 
 # ==========================================

@@ -28,6 +28,12 @@ from scipy.signal import butter, sosfilt  # filter implementation used for high-
 from scipy.stats import entropy  # rhythm entropy calculation for nPVI-like metrics
 
 from onset_detectors import detect_onsets, refine_onsets_to_sample, available_methods
+try:
+    from .onset_exports import write_audacity_labels
+    from .shared_output_writers import save_matplotlib_figure, write_workbook_sheets
+except ImportError:
+    from onset_exports import write_audacity_labels
+    from shared_output_writers import save_matplotlib_figure, write_workbook_sheets
 
 # ==========================================
 # 1. MAIN CONFIGURATION & TOGGLES
@@ -687,13 +693,12 @@ for filename in sorted(os.listdir(audio_folder)):
         # --- AUDACITY LABEL EXPORT ---
         # These labels support the manual verification step recommended for noisy recordings.
         if CREATE_AUDACITY_LABELS and len(clustered_onset_times) > 0:
-            label_filename = f"{os.path.splitext(filename)[0]}_labels.txt"
-            label_path = os.path.join(audio_folder, label_filename)
-            precision = 6 if ONSET_REFINE_ENABLED else 4
-            with open(label_path, "w") as file_handle:
-                for idx, onset_time in enumerate(clustered_onset_times):
-                    tag = "Onset" if not ONSET_REFINE_ENABLED else "OnsetR"
-                    file_handle.write(f"{onset_time:.{precision}f}\t{onset_time:.{precision}f}\t{tag}_{idx + 1}\n")
+            write_audacity_labels(
+                audio_folder,
+                filename,
+                clustered_onset_times,
+                refine_enabled=ONSET_REFINE_ENABLED,
+            )
 
         # --- SPECTROGRAM VISUALIZER ---
         # The spectrogram overlay is intended for visual QA, not for downstream computation.
@@ -739,7 +744,7 @@ for filename in sorted(os.listdir(audio_folder)):
                     label="Onsets",
                 )
                 image_path = os.path.join(audio_folder, image_filename)
-                plt.savefig(image_path)
+                save_matplotlib_figure(plt, image_path)
                 plt.close()
 
         # --- SAVE FILE SUMMARY DATA ---
@@ -805,11 +810,13 @@ df_summary = pd.DataFrame(file_summary_data)
 df_dyads = pd.DataFrame(dyadic_events_data)
 df_stable_dyads = pd.DataFrame(stable_dyadic_events_data)
 
-with pd.ExcelWriter(output_excel_path) as writer:
-    df_summary.to_excel(writer, sheet_name="File Summaries", index=False)
-    df_dyads.to_excel(writer, sheet_name="Dyadic Events (For Plots)", index=False)
-    if FILTER_STABLE_RHYTHMS:
-        df_stable_dyads.to_excel(writer, sheet_name="Dyadic Events (Stable Rhythms)", index=False)
+workbook_sheets = {
+    "File Summaries": df_summary,
+    "Dyadic Events (For Plots)": df_dyads,
+}
+if FILTER_STABLE_RHYTHMS:
+    workbook_sheets["Dyadic Events (Stable Rhythms)"] = df_stable_dyads
+write_workbook_sheets(output_excel_path, workbook_sheets)
 
 print(f"\nSUCCESS! Processed {len(file_summary_data)} files.")
 print(f"Extracted {len(dyadic_events_data)} total dyadic rhythms.")
