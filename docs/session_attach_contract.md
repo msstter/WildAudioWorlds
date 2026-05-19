@@ -12,18 +12,28 @@ Current implemented scope:
 - `service/bootstrap`
 - `backend-call/run`
 - `recorded-audio/import`
+- `session/get_state`
+- `session/open_asset`
+- `session/clear_asset`
 - `session/attach`
 - `session/detach`
+- `asset/set_revision`
+- `transport/set_time`
+- `transport/set_selection`
 - `shell/open_companion`
 - first shell-edge launch from Electron into AudioOnsetFinder
 - reverse shell-edge launch from AudioOnsetFinder into Electron
 - focused failure/reuse checks for shell-edge launch failure, companion attach failure, and linked-session reuse
+- first AudioManager ownership slice for canonical asset, revision, playhead, and selection state inside the persistent local integration service
+- first shell-publish slice for real Electron and AudioOnsetFinder asset or transport mutations into the AudioManager command surface
 
 Current non-implemented scope from this draft:
 
-- linked-session launch-failure, attach-failure, and session-reuse behavior beyond the first happy-path shell edges
+- live event fanout for real-time shell-to-shell transport updates
+- dirty-state ownership and coordinated revision-ready switching
+- broader linked-session lifecycle behavior beyond the current focused failure/reuse and attach-handshake slices
 
-That means this document is now partly implemented: the manifest draft, bootstrap path, first open-companion launch-intent flow, attach/detach flow, bidirectional first shell edges, and focused failure/reuse checks are live, but broader shell lifecycle wiring and later manager ownership are still the next Step 5 extension.
+That means this document is now partly implemented: the manifest draft, persistent-service bootstrap path, first AudioManager state ownership commands, first open-companion launch-intent flow, attach/detach flow, bidirectional first shell edges, shell-side asset and transport publication, and focused failure/reuse checks are live, but broader event delivery and later revision-sync wiring are still ahead.
 
 ## Purpose
 
@@ -35,7 +45,7 @@ It is intended to do three things:
 2. Define the first session manifest fields that both shells and the future local integration service can rely on.
 3. Provide the initial launch and attach payload draft that the next service bootstrap slice can implement without reopening basic vocabulary decisions.
 
-This draft is intentionally narrow. It does not attempt to finalize the entire long-lived service protocol, DataManager behavior, or AudioManager internals.
+This draft is intentionally narrow. It does not attempt to finalize the entire long-lived service protocol, DataManager behavior, or the final event-delivery model around AudioManager.
 
 ## Terms
 
@@ -326,7 +336,7 @@ Request draft:
 
 ## First Event Draft
 
-These events are the minimum useful set for the next integration slice.
+These events are the minimum useful set for the next integration slice after the current request-response AudioManager foundation.
 
 - `session/peer_attached`
 - `session/peer_detached`
@@ -336,11 +346,11 @@ These events are the minimum useful set for the next integration slice.
 
 The next service bootstrap does not need to implement the full final event family immediately, but it should use these names so later work does not rename basic session vocabulary again.
 
-## Implementation Rules For The Next Slice
+## Implementation Rules For The Current Slice
 
-- The first integration service bootstrap should accept this draft as the source of truth for attach/open payloads.
-- The current Electron bridge should be able to route backend-call and recorded-audio commands through that bootstrap without changing user-visible behavior.
-- AudioOnsetFinder and Electron now both attach on companion startup in the first shell-edge slices, but broader shell lifecycle wiring around detach still remains outside this draft's implemented scope.
+- The persistent integration service should accept this draft as the source of truth for attach/open payloads plus canonical asset and transport snapshots.
+- The current Electron and AudioOnsetFinder bridges should be able to reuse that service without changing user-visible launch behavior.
+- AudioOnsetFinder and Electron now both attach on companion startup in the first shell-edge slices, but broader shell lifecycle wiring and live event propagation still remain outside this draft's implemented scope.
 
 ## Current Thin Implementation Notes
 
@@ -348,9 +358,15 @@ The next service bootstrap does not need to implement the full final event famil
 - `shell/open_companion` is now also used by the Electron shell edge to launch `AudioOnsetFinder-main/GUI/pipeline_gui.py` with shared WildAudioWorlds session attach args.
 - `session/attach` currently attaches a second shell snapshot, increments `stateRevision`, and promotes the manifest from `standalone` to `linked` when peer count grows beyond one.
 - `session/detach` now removes a peer snapshot, increments `stateRevision`, and downgrades the manifest back to `standalone` when only one peer remains.
+- `session/get_state`, `session/open_asset`, `session/clear_asset`, `asset/set_revision`, `transport/set_time`, and `transport/set_selection` now run on the persistent service and publish updated manifest-backed session snapshots through the new AudioManager state owner.
+- Bootstrap-written manifests now sync their initial asset and transport snapshot into the live service, and manifest-backed commands like `session/attach`, `session/detach`, and `shell/open_companion` now keep that service-owned state aligned.
 - AudioOnsetFinder startup now consumes those shared attach args before Qt initialization and calls `session/attach` through the thin bootstrap so the companion joins the linked session during launch.
 - Electron startup now also consumes those shared attach args before the BrowserWindow shows and calls `session/attach` through the thin bootstrap so the companion joins the linked session during launch.
+- Electron now publishes backend-monitor asset open or clear plus playhead and selection snapshots into the persistent service from `3DAudioGraphs-main/frontend/main.cjs`, using renderer-side `audio` transport listeners for prompt play, pause, and seek updates.
+- AudioOnsetFinder now publishes onset-editor asset loads, manual seek changes, playback position changes, and region selection clear or select updates through `AudioOnsetFinder-main/GUI/local_integration_session.py` and `AudioOnsetFinder-main/GUI/onset_editor.py`.
 - Focused Python contract tests now cover `service/bootstrap -> shell/open_companion -> session/attach`, `session/detach`, launch failure, attach failure, and session reuse behavior.
+- Focused Python contract tests now also cover the first AudioManager ownership path for asset, revision, playhead, selection, and asset-clear state inside the persistent service.
+- Focused shell-edge validation now also covers the onset-editor callback bridge plus Electron syntax checks for the renderer and main-process shell-publish surfaces.
 - Focused shell-edge validation now also covers the shared CLI arg vocabulary, the AudioOnsetFinder startup attach helper, Electron syntax checks, and the frontend production build.
 - The session manifest should be safe to publish even before DataManager exists, but only the bootstrap/service should write it.
 - Companion attach failures must return structured failures while leaving the host shell fully usable.
@@ -362,14 +378,15 @@ This draft is good enough for the next implementation slice if it supports the f
 1. A standalone shell can create a session manifest that includes asset, revision, playhead, and selection state.
 2. The host shell can request companion launch with `shell/open_companion` without inventing new payload fields.
 3. A companion shell can attach with `session/attach` and receive the current asset, revision, playhead, and selection snapshot.
-4. Session state updates can be versioned with `stateRevision`.
-5. Failure to launch or attach a companion shell does not invalidate the host shell session.
+4. The persistent service can own asset, revision, playhead, and selection updates through explicit request-response commands without bypassing the canonical session manifest.
+5. Session state updates can be versioned with `stateRevision`.
+6. Failure to launch or attach a companion shell does not invalidate the host shell session.
 
 ## Immediate Follow-On Work
 
 After this draft, the next implementation work should be:
 
-1. Stand up the thin local integration service bootstrap.
-2. Route the current Electron bridge through that bootstrap using compatibility wrappers.
-3. Add the first linked-session smoke or contract checks against this manifest and payload shape.
-4. Use that working service boundary to start DataManager extraction.
+1. Add event delivery plus canonical shell consumption for transport, asset, and revision updates where request-response polling is no longer sufficient.
+2. Extend AudioManager ownership to dirty-state and coordinated revision-ready switching.
+3. Expand contract and integration coverage around playhead sync, selection sync, revision switching, and companion attach or detach reuse.
+4. Collapse temporary shell-local caches as service-owned read paths become authoritative.

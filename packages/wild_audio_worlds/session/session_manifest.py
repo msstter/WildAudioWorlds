@@ -192,8 +192,13 @@ def build_session_summary(manifest: dict[str, Any], manifest_path: str | Path) -
         "sessionId": _text_or_empty(manifest.get("sessionId")),
         "mode": _text_or_empty(manifest.get("mode")) or DEFAULT_SESSION_MODE,
         "stateRevision": _coerce_int(manifest.get("stateRevision"), 0),
+        "createdAt": _text_or_empty(manifest.get("createdAt")),
+        "updatedAt": _text_or_empty(manifest.get("updatedAt")),
         "manifestPath": str(Path(manifest_path).resolve()),
         "service": _mapping_or_empty(manifest.get("service")),
         "hostShell": _mapping_or_empty(manifest.get("hostShell")),
         "asset": _mapping_or_empty(manifest.get("asset")),
+        "transportState": _mapping_or_empty(manifest.get("transportState")),
+        "launchContext": _mapping_or_empty(manifest.get("launchContext")),
+        "peers": _list_or_empty(manifest.get("peers")),
     }

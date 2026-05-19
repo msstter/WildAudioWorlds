@@ -710,6 +710,9 @@ let backendCallStateCache = null;
 let backendCallLogsCache = [];
 let cachedBackendPythonCommand = null;
 let localIntegrationSessionCache = null;
+let localIntegrationStateSyncInFlight = false;
+let localIntegrationStateSyncQueued = false;
+let pendingLocalIntegrationStateSnapshot = null;
 
 const BACKEND_CALL_LOG_LIMIT = 200;
 const LOCAL_INTEGRATION_HOST_SHELL_ID = `shell-graph-${randomUUID()}`;
@@ -798,6 +801,230 @@ function appendBackendEventLog(eventCode, context = {}, overrides = {}) {
 function setBackendCallState(nextState) {
     backendCallStateCache = nextState && typeof nextState === 'object' ? nextState : null;
     sendToBackendMonitor('backend-call-monitor:state', backendCallStateCache);
+    scheduleLocalIntegrationStateSync(backendCallStateCache);
+}
+
+function cloneJsonCompatibleValue(value) {
+    if (value === undefined) return null;
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch (_error) {
+        return null;
+    }
+}
+
+function stableSerializeValue(value) {
+    if (Array.isArray(value)) {
+        return `[${value.map((entry) => stableSerializeValue(entry)).join(',')}]`;
+    }
+    if (value && typeof value === 'object') {
+        return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableSerializeValue(value[key])}`).join(',')}}`;
+    }
+    return JSON.stringify(value);
+}
+
+function normalizeAudioManagerAssetPayload(asset = null) {
+    const normalizedAsset = asset && typeof asset === 'object' && !Array.isArray(asset)
+        ? asset
+        : {};
+    const assetId = typeof normalizedAsset.assetId === 'string' ? normalizedAsset.assetId.trim() : '';
+    const sourceAudioPath = typeof normalizedAsset.sourceAudioPath === 'string' ? normalizedAsset.sourceAudioPath.trim() : '';
+    if (!assetId && !sourceAudioPath) {
+        return null;
+    }
+
+    return {
+        assetId: assetId || sourceAudioPath,
+        assetLabel: typeof normalizedAsset.assetLabel === 'string' ? normalizedAsset.assetLabel.trim() : '',
+        sourceAudioPath,
+        sourceKind: typeof normalizedAsset.sourceKind === 'string' && normalizedAsset.sourceKind.trim() !== ''
+            ? normalizedAsset.sourceKind.trim()
+            : (sourceAudioPath ? 'frontend-audio-asset' : 'unknown'),
+        activeRevisionId: typeof normalizedAsset.activeRevisionId === 'string' && normalizedAsset.activeRevisionId.trim() !== ''
+            ? normalizedAsset.activeRevisionId.trim()
+            : (assetId || sourceAudioPath),
+    };
+}
+
+function normalizeAudioManagerSelectionWindow(selectionWindow = null) {
+    const normalizedSelection = selectionWindow && typeof selectionWindow === 'object' && !Array.isArray(selectionWindow)
+        ? cloneJsonCompatibleValue(selectionWindow) || {}
+        : {};
+    if (normalizedSelection && typeof normalizedSelection === 'object') {
+        delete normalizedSelection.updatedByShellId;
+    }
+    return normalizedSelection;
+}
+
+function normalizeAudioManagerPlayheadSec(playheadSec) {
+    const normalizedPlayheadSec = Number(playheadSec);
+    return Number.isFinite(normalizedPlayheadSec) ? Math.max(0, normalizedPlayheadSec) : 0;
+}
+
+function buildAudioManagerSyncSnapshot(nextState = null) {
+    const normalizedState = nextState && typeof nextState === 'object' && !Array.isArray(nextState)
+        ? nextState
+        : {};
+    const sessionPayload = buildLocalIntegrationSessionPayload({
+        launchReason: 'audio-manager-state-sync',
+        asset: normalizedState.asset && typeof normalizedState.asset === 'object' && !Array.isArray(normalizedState.asset)
+            ? normalizedState.asset
+            : null,
+        selection: normalizedState.selection && typeof normalizedState.selection === 'object' && !Array.isArray(normalizedState.selection)
+            ? normalizedState.selection
+            : null,
+    });
+    const transportState = sessionPayload.transportState && typeof sessionPayload.transportState === 'object' && !Array.isArray(sessionPayload.transportState)
+        ? sessionPayload.transportState
+        : {};
+
+    return {
+        asset: normalizeAudioManagerAssetPayload(sessionPayload.asset),
+        playheadSec: normalizeAudioManagerPlayheadSec(transportState.playheadSec),
+        selectionWindow: normalizeAudioManagerSelectionWindow(transportState.selectionWindow),
+        rawAsset: normalizedState.asset && typeof normalizedState.asset === 'object' && !Array.isArray(normalizedState.asset)
+            ? normalizedState.asset
+            : null,
+        rawSelection: normalizedState.selection && typeof normalizedState.selection === 'object' && !Array.isArray(normalizedState.selection)
+            ? normalizedState.selection
+            : null,
+    };
+}
+
+function currentAudioManagerSessionAsset() {
+    return normalizeAudioManagerAssetPayload(localIntegrationSessionCache?.asset || null);
+}
+
+function currentAudioManagerSelectionWindow() {
+    return normalizeAudioManagerSelectionWindow(localIntegrationSessionCache?.transportState?.selectionWindow || null);
+}
+
+function currentAudioManagerPlayheadSec() {
+    return normalizeAudioManagerPlayheadSec(localIntegrationSessionCache?.transportState?.playheadSec);
+}
+
+function shouldBootstrapAudioManagerSession(snapshot) {
+    if (localIntegrationSessionCache?.sessionId) return true;
+    if (snapshot?.asset) return true;
+    if (snapshot?.selectionWindow?.isReady) return true;
+    return normalizeAudioManagerPlayheadSec(snapshot?.playheadSec) > 0;
+}
+
+async function syncAudioManagerState(nextState) {
+    const snapshot = buildAudioManagerSyncSnapshot(nextState);
+    if (!shouldBootstrapAudioManagerSession(snapshot)) {
+        return;
+    }
+
+    await ensureLocalIntegrationSession({
+        launchReason: 'audio-manager-state-sync',
+        asset: snapshot.rawAsset,
+        selection: snapshot.rawSelection,
+    });
+
+    const sessionId = localIntegrationSessionCache?.sessionId || '';
+    if (!sessionId) {
+        return;
+    }
+
+    const currentAsset = currentAudioManagerSessionAsset();
+    const currentSelectionWindow = currentAudioManagerSelectionWindow();
+    const currentPlayheadSec = currentAudioManagerPlayheadSec();
+    const assetChanged = stableSerializeValue(currentAsset) !== stableSerializeValue(snapshot.asset);
+    const selectionChanged = stableSerializeValue(currentSelectionWindow) !== stableSerializeValue(snapshot.selectionWindow);
+    const playheadChanged = Math.abs(currentPlayheadSec - snapshot.playheadSec) >= 0.05;
+
+    if (!snapshot.asset && currentAsset) {
+        await runLocalIntegrationServiceCommand('session/clear_asset', {
+            sessionId,
+            transportState: {
+                playheadSec: snapshot.playheadSec,
+                selectionWindow: snapshot.selectionWindow,
+            },
+            updatedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+        }, {
+            launchReason: 'audio-manager-clear-asset',
+            asset: null,
+            selection: snapshot.rawSelection,
+        });
+        return;
+    }
+
+    if (snapshot.asset && assetChanged) {
+        await runLocalIntegrationServiceCommand('session/open_asset', {
+            sessionId,
+            asset: snapshot.asset,
+            transportState: {
+                playheadSec: snapshot.playheadSec,
+                selectionWindow: snapshot.selectionWindow,
+            },
+            updatedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+        }, {
+            launchReason: 'audio-manager-open-asset',
+            asset: snapshot.rawAsset,
+            selection: snapshot.rawSelection,
+        });
+        return;
+    }
+
+    if (selectionChanged) {
+        await runLocalIntegrationServiceCommand('transport/set_selection', {
+            sessionId,
+            selectionWindow: snapshot.selectionWindow,
+            playheadSec: snapshot.playheadSec,
+            updatedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+        }, {
+            launchReason: 'audio-manager-transport-selection',
+            asset: snapshot.rawAsset,
+            selection: snapshot.rawSelection,
+        });
+        return;
+    }
+
+    if (playheadChanged) {
+        await runLocalIntegrationServiceCommand('transport/set_time', {
+            sessionId,
+            playheadSec: snapshot.playheadSec,
+            updatedByShellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+        }, {
+            launchReason: 'audio-manager-transport-time',
+            asset: snapshot.rawAsset,
+            selection: snapshot.rawSelection,
+        });
+    }
+}
+
+async function flushQueuedLocalIntegrationStateSync() {
+    if (localIntegrationStateSyncInFlight) {
+        return;
+    }
+
+    localIntegrationStateSyncInFlight = true;
+    try {
+        while (localIntegrationStateSyncQueued) {
+            const nextState = pendingLocalIntegrationStateSnapshot;
+            localIntegrationStateSyncQueued = false;
+            pendingLocalIntegrationStateSnapshot = null;
+            await syncAudioManagerState(nextState);
+        }
+    } catch (error) {
+        console.warn('Failed to sync local integration AudioManager state:', error);
+    } finally {
+        localIntegrationStateSyncInFlight = false;
+        if (localIntegrationStateSyncQueued) {
+            void flushQueuedLocalIntegrationStateSync();
+        }
+    }
+}
+
+function scheduleLocalIntegrationStateSync(nextState) {
+    if (!backendCallMonitorIpc) {
+        return;
+    }
+
+    pendingLocalIntegrationStateSnapshot = cloneJsonCompatibleValue(nextState);
+    localIntegrationStateSyncQueued = true;
+    void flushQueuedLocalIntegrationStateSync();
 }
 
 function withFormattedBackendFailure(failurePayload, { errorCode } = {}) {

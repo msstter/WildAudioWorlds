@@ -49,19 +49,23 @@ At the start of this prompt, the repo already has:
   - Electron startup consumes those args and calls `session/attach` before the BrowserWindow shows
 - Both shell clients now prefer the advertised persistent Unix-domain-socket endpoint for non-bootstrap local-integration commands, falling back to the stdio bootstrap only when the reusable endpoint is unavailable
 - The persistent service now owns structured compatibility-job lifecycle data including job IDs, active-job summaries, `job/status`, `job/cancel`, and supersession wiring through `supersedesJobId`
+- A first AudioManager slice now exists in `services/local_integration/audio_manager.py`, and the persistent service now owns canonical asset, revision, playhead, and selection state through `session/get_state`, `session/open_asset`, `session/clear_asset`, `asset/set_revision`, `transport/set_time`, and `transport/set_selection`
+- Bootstrap, attach, detach, and open-companion manifest mutations now keep the daemon's AudioManager snapshot in sync instead of leaving service-owned state behind the manifest
+- Both shells now publish real asset and transport changes into that AudioManager surface: Electron publishes backend-monitor asset and playhead or selection snapshots from `3DAudioGraphs-main/frontend/main.cjs`, and AudioOnsetFinder publishes onset-editor asset, playhead, and selection changes through `AudioOnsetFinder-main/GUI/local_integration_session.py`
 - Step 7 DataManager filesystem authority is complete for the current derived-artifact surfaces, including the remaining standalone AudioOnsetFinder batch, report, analyzer, selector, and noise-profile outputs
 - Focused validation currently passes for `tests/contract/test_data_manager.py` and the AudioOnsetFinder writer/Excel/pipeline bundle (`tests/test_shared_output_writers.py`, `tests/test_onset_exports.py`, `tests/test_excel_onset_io.py`, `tests/test_pipeline_file_selection.py`)
 - Focused Step 6 validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, `tests/contract/test_audio_onset_shell_session.py`, and `node --check 3DAudioGraphs-main/frontend/main.cjs`
+- Focused Step 8 validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py -k local_integration_audio_state`, and Electron syntax checks for both `3DAudioGraphs-main/frontend/main.cjs` and `3DAudioGraphs-main/frontend/src/main.js`
 - Headless pytest startup now seeds PyQt6's bundled plugin paths, and non-viewer `onset_editor` helper imports no longer require `pyqtgraph`
 
 ## Highest-Priority Next Work
 
 Unless the docs have changed by the time you read them, the next logical implementation order is:
 
-1. Introduce AudioManager as the canonical owner of active asset, playhead, selection, revision, and dirty-state session data.
-2. Wire both shells to publish and consume AudioManager transport and selection events without peer-to-peer synchronization.
+1. Add canonical shell consumption plus event delivery for AudioManager transport, asset, and revision updates without peer-to-peer synchronization.
+2. Add dirty-state ownership plus revision-ready switching so onset-side edits move both shells through one canonical service-owned revision transition.
 3. Add focused contract and integration coverage around playhead sync, selection sync, revision-ready switching, companion attach or detach reuse, and superseded jobs.
-4. Expand the persistent service from status or cancel scaffolding into richer progress or event delivery where the shells need live job feedback.
+4. Collapse temporary shell-local caches where the service-owned read path is now strong enough to replace them.
 
 If you discover the docs have moved beyond this, follow the docs instead of this snapshot.
 

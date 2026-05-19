@@ -544,6 +544,81 @@ def test_panel_table_sync(qapp):
     assert panel._table.rowCount() == 2
 
 
+def test_panel_publishes_local_integration_audio_state(qapp, monkeypatch):
+    published: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_asset_state_impl",
+        lambda audio_path, *, asset_label="": published.update(
+            {
+                "asset_path": audio_path,
+                "asset_label": asset_label,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_playhead_impl",
+        lambda time_sec, *, force=False: published.update(
+            {
+                "playhead": time_sec,
+                "playhead_force": force,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_selection_impl",
+        lambda start, end, *, playhead_sec=None: published.update(
+            {
+                "selection": (start, end),
+                "selection_playhead": playhead_sec,
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "onset_editor._clear_audio_onset_selection_impl",
+        lambda *, playhead_sec=None: published.update(
+            {
+                "cleared_playhead": playhead_sec,
+            }
+        ),
+    )
+
+    class _ViewerStub:
+        def __init__(self):
+            self._playhead = 4.5
+
+        def get_playhead_position(self):
+            return self._playhead
+
+        def clear_selection_region(self):
+            return None
+
+        def clear_focus_region_selection(self, emit_signal=False):
+            return None
+
+        def clear_loop(self):
+            return None
+
+    panel = OnsetEditorPanel()
+    panel._viewer = _ViewerStub()
+    panel._audio_path = "/tmp/example.wav"
+
+    panel._on_viewer_audio_loaded(panel._audio_path)
+    assert published["asset_path"] == "/tmp/example.wav"
+    assert published["asset_label"] == "example.wav"
+
+    panel._on_viewer_view_clicked(1.25)
+    assert published["playhead"] == 1.25
+    assert published["playhead_force"] is True
+
+    panel._on_viewer_region_selected(1.0, 2.0)
+    assert published["selection"] == (1.0, 2.0)
+    assert published["selection_playhead"] == 4.5
+
+    panel._clear_selection_state()
+    assert published["cleared_playhead"] == 4.5
+
+
 def test_analyze_signals_dialog_shows_recommendations(qapp):
     """AnalyzeSignalsDialog should display recommendation text when provided."""
     recommendation = {

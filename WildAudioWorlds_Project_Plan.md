@@ -438,12 +438,20 @@ Current slice status:
 
 Exit criteria: current analysis modules publish derived artifacts through DataManager-owned roots or DataManager-compatible bridge helpers, with only preset/config persistence and explicit standalone fallback internals remaining local.
 
-### Step 8. Introduce AudioManager as the authoritative session-sync layer [Not Started]
+### Step 8. Introduce AudioManager as the authoritative session-sync layer [In Progress]
 
 - Implement AudioManager in the shared local integration service.
 - Move ownership of active asset selection, playhead position, selection window, revision switching, and dirty-state broadcasting into AudioManager.
 - Wire both shells to publish and consume AudioManager events.
 - Add version-aware sync so an onset-side edit that produces a new derived revision triggers one coordinated frontend refresh.
+
+Completed Step 8 additions:
+
+- A first service-owned AudioManager now exists in `services/local_integration/audio_manager.py` and is loaded by the persistent daemon in `services/local_integration/service_runtime.py`.
+- The persistent service now owns canonical `asset`, `transportState`, and revision mutations through `session/get_state`, `session/open_asset`, `session/clear_asset`, `asset/set_revision`, `transport/set_time`, and `transport/set_selection`, while persisting those updates back into the shared session manifest.
+- Bootstrap-written session manifests now sync their initial state into the live persistent service, and manifest-backed commands like `session/attach`, `session/detach`, and `shell/open_companion` now update the daemon's AudioManager state rather than leaving the in-memory service snapshot behind.
+- Both shells now publish real asset and transport mutations into that command surface: Electron publishes backend-monitor asset open or clear plus transport snapshots from the existing renderer bridge, and AudioOnsetFinder publishes onset-editor asset, playhead, and selection changes through the shared session helper.
+- Focused validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, `tests/contract/test_audio_onset_shell_session.py`, a focused onset-editor widget slice, and Electron syntax checks with the new AudioManager shell-publish path in place.
 
 Exit criteria: moving the playhead in either view updates the other in real time, and completed onset-side edits switch both views to the same new asset revision.
 
@@ -460,12 +468,12 @@ Exit criteria: moving the playhead in either view updates the other in real time
 
 ## 8. Recommended Next Execution Order
 
-The original first execution order has already been completed through the baseline, regression, and first shared-package extraction work. The next execution order should now be:
+The original first execution order has already been completed through the baseline, regression, persistent-service, DataManager, and first AudioManager-foundation work. The next execution order should now be:
 
-1. Promote the thin bootstrap into the persistent local integration service shape needed for multi-client linked sessions, structured job lifecycle, and AudioManager ownership.
-2. Introduce AudioManager with canonical session state for active asset, playhead, selection, revision, and dirty-state broadcasts.
-3. Wire both shells to publish and consume AudioManager transport and selection events without direct peer-to-peer synchronization.
-4. Add coordinated revision-ready switching so onset-side edits move both shells to the same derived revision through one canonical service event.
-5. Expand contract and integration coverage around playhead sync, selection sync, revision switching, companion attach or detach reuse, and superseded jobs.
+1. Add canonical shell consumption and event delivery for AudioManager transport, asset, and revision updates without direct peer-to-peer synchronization.
+2. Add coordinated revision-ready switching and dirty-state ownership so onset-side edits move both shells to the same derived revision through one canonical service path.
+3. Expand contract and integration coverage around playhead sync, selection sync, revision switching, companion attach or detach reuse, and superseded jobs.
+4. Keep moving remaining compatibility logic away from legacy shell-local state holders and onto the shared service-owned session surface.
+5. Collapse temporary shell-local caches once the service-owned read path is strong enough to replace them.
 
 This updated sequence keeps momentum on the merge while still protecting the current working bridge and preserving both shells as independently usable entry points.

@@ -63,6 +63,7 @@ Last updated: 2026-05-19
 - [x] Validate the reverse AudioOnsetFinder-to-Electron shared-session shell-edge path with focused Python contract tests plus Electron CJS smoke and syntax checks
 - [x] Validate `session/detach` plus linked-session launch-failure, attach-failure, and session-reuse behavior with focused Python contract tests
 - [x] Validate the persistent local integration service bootstrap, shell attach reuse, backend-call job metadata, and job cancellation flow with focused Python contract tests plus an Electron main-process syntax check
+- [x] Validate the first AudioManager slice around service-owned asset, revision, playhead, and selection state with focused local-integration Python contract tests
 - [x] Validate the first DataManager extraction around graph-asset publication, manifest ownership, compatibility helper delegation, and stale manifest-write rejection with focused Python contract tests
 - [x] Validate the next DataManager extraction around backend-call export publication, workbook-write delegation, and non-graph derived artifact path authority with focused Python contract tests
 - [x] Validate the next DataManager extraction around recorded-audio source-input publication plus shared onset writer routing with focused Python tests and Electron syntax checks
@@ -145,6 +146,19 @@ Last updated: 2026-05-19
 - [x] Route both shell clients to prefer the advertised persistent service endpoint for non-bootstrap local-integration commands, falling back to the thin bootstrap only when the reusable endpoint is unavailable
 - [x] Add structured local-integration job metadata plus `job/status`, `job/cancel`, and supersession wiring for `backend-call/run` and `recorded-audio/import`, with focused contract coverage around job lifecycle behavior
 
+## Newly Completed AudioManager Foundation Slice
+
+- [x] Add a service-owned `AudioManager` in `services/local_integration/audio_manager.py` so canonical asset, revision, playhead, and selection state live behind the persistent local integration daemon instead of shell-local caches
+- [x] Route `session/get_state`, `session/open_asset`, `asset/set_revision`, `transport/set_time`, and `transport/set_selection` through the persistent service and persist those mutations back to the shared session manifest
+- [x] Keep the daemon's AudioManager state aligned with bootstrap, attach, detach, and open-companion manifest updates, and validate the new ownership path with focused local-integration contract tests
+
+## Newly Completed AudioManager Shell Publish Slice
+
+- [x] Add `session/clear_asset` so the persistent service can clear stale canonical asset state when the Electron shell unloads the current asset or enters live-source mode
+- [x] Wire the Electron shell to publish real asset open, asset clear, playhead, and selection changes from the existing backend-call monitor path into the AudioManager command surface
+- [x] Wire the AudioOnsetFinder onset editor to publish loaded assets, manual seek changes, playback position updates, and viewer selection clear/select changes through the shared local-integration session helpers while remaining standalone-safe when the shared package tree is absent
+- [x] Validate the shell-publish slice with focused service-runtime and shell-helper contract tests, a focused onset-editor widget test, and Electron syntax checks
+
 ## Notes
 
 - Root repo path: `/Users/mh295/WildAudioWorlds`
@@ -154,7 +168,10 @@ Last updated: 2026-05-19
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
 - Persistent local integration daemon entrypoint now lives in `services/local_integration/service_runtime.py`
+- AudioManager now lives in `services/local_integration/audio_manager.py` and currently owns asset, revision, playhead, and selection state for the persistent service, including explicit asset-clear mutations
 - Focused Step 6 validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, and `tests/contract/test_audio_onset_shell_session.py`, plus `node --check 3DAudioGraphs-main/frontend/main.cjs`
+- Focused Step 8 foundation validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_local_integration_bootstrap.py`, and `tests/contract/test_audio_onset_shell_session.py`
+- Focused Step 8 shell-publish validation now passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py`, `node --check 3DAudioGraphs-main/frontend/main.cjs`, and `node --check 3DAudioGraphs-main/frontend/src/main.js`
 - Focused Step 7 close-out validation now passes for `tests/contract/test_data_manager.py` plus the AudioOnsetFinder writer/Excel/pipeline bundle (`tests/test_shared_output_writers.py`, `tests/test_onset_exports.py`, `tests/test_excel_onset_io.py`, `tests/test_pipeline_file_selection.py`)
-- Current implementation phase: Step 6 and Step 7 are complete for the current persistent-service and derived-artifact surfaces, and the next active milestone is canonical session-state ownership in Step 8
-- The highest-leverage next move is to introduce AudioManager on top of the new persistent service, then wire transport, selection, and revision ownership through that shared session authority
+- Current implementation phase: Step 6 and Step 7 are complete, and Step 8 is now in progress through the service-owned AudioManager plus first shell-publish slice
+- The highest-leverage next move is to add canonical shell consumption and event delivery for AudioManager transport and revision updates, then extend the service-owned state model to dirty-state and revision-ready coordination

@@ -1127,6 +1127,7 @@ const buildBackendCallAssetSnapshot = (selectedAsset = getSelectedAudioAsset()) 
     return selectedAsset ? {
     id: selectedAsset.id,
     label: selectedAsset.label,
+    revisionId: selectedAsset.revisionId || selectedAsset.activeRevisionId || selectedAsset.id,
     audioUrl: selectedAsset.audioUrl,
     mfccCsvUrl: selectedAsset.mfccCsvUrl,
     fftCsvUrl: selectedAsset.fftCsvUrl,
@@ -3783,6 +3784,23 @@ if (openCompanionBtn) {
             void openAudioOnsetFinderCompanion();
         });
     }
+}
+
+if (audio && typeof audio.addEventListener === 'function') {
+    [
+        'play',
+        'pause',
+        'seeking',
+        'seeked',
+        'timeupdate',
+        'loadedmetadata',
+        'ended',
+        'ratechange',
+    ].forEach((eventName) => {
+        audio.addEventListener(eventName, () => {
+            syncBackendCallMonitorState();
+        });
+    });
 }
 
 window.setInterval(() => {

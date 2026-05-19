@@ -5,6 +5,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 from typing import Any
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ AUDIO_GRAPHS_SHELL_TYPE = "audio-graphs"
 LOCAL_INTEGRATION_HOST_SHELL_ID = f"shell-aof-{uuid4().hex[:8]}"
 LOCAL_INTEGRATION_HOST_STARTED_AT = datetime.now(timezone.utc).isoformat()
 LOCAL_INTEGRATION_SESSION_CACHE: dict[str, Any] = {}
+LOCAL_INTEGRATION_AUDIO_MANAGER_CACHE: dict[str, Any] = {}
 
 
 def _mapping_or_empty(value: Any) -> dict[str, Any]:
@@ -46,6 +48,13 @@ def _mapping_or_empty(value: Any) -> dict[str, Any]:
 
 def _text_or_empty(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _resolve_workspace_root(workspace_root: str | Path | None = None) -> Path:
@@ -158,6 +167,291 @@ def _load_cached_session_manifest(workspace_root: str | Path | None = None) -> d
     if not manifest_path:
         return {}
     return _mapping_or_empty(load_session_manifest(manifest_path))
+
+
+def _resolve_cached_audio_manager_state(workspace_root: str | Path | None = None) -> dict[str, Any]:
+    manifest = _load_cached_session_manifest(workspace_root)
+    if manifest:
+        return manifest
+    return _resolve_cached_session(workspace_root)
+
+
+def _normalize_audio_path(audio_path: str | Path) -> str:
+    return str(Path(audio_path).resolve())
+
+
+def _build_audio_onset_asset_payload(
+    audio_path: str | Path,
+    *,
+    asset_label: str = "",
+    active_revision_id: str = "",
+    workspace_root: str | Path | None = None,
+) -> dict[str, Any]:
+    normalized_audio_path = _normalize_audio_path(audio_path)
+    current_asset = _mapping_or_empty(_resolve_cached_audio_manager_state(workspace_root).get("asset"))
+    current_source_audio_path = _text_or_empty(current_asset.get("sourceAudioPath"))
+    current_asset_id = _text_or_empty(current_asset.get("assetId"))
+    current_revision_id = _text_or_empty(current_asset.get("activeRevisionId"))
+    normalized_label = _text_or_empty(asset_label) or Path(normalized_audio_path).name
+
+    if current_source_audio_path == normalized_audio_path and current_asset_id:
+        asset_id = current_asset_id
+    else:
+        asset_id = f"aof-asset:{normalized_audio_path}"
+
+    if _text_or_empty(active_revision_id):
+        revision_id = _text_or_empty(active_revision_id)
+    elif current_source_audio_path == normalized_audio_path and current_revision_id:
+        revision_id = current_revision_id
+    else:
+        revision_id = asset_id
+
+    return {
+        "assetId": asset_id,
+        "assetLabel": normalized_label,
+        "sourceAudioPath": normalized_audio_path,
+        "sourceKind": "raw-audio",
+        "activeRevisionId": revision_id,
+        "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }
+
+
+def _build_audio_onset_selection_window(start_sec: float, end_sec: float) -> dict[str, Any]:
+    normalized_start = max(0.0, float(min(start_sec, end_sec)))
+    normalized_end = max(normalized_start, float(max(start_sec, end_sec)))
+    return {
+        "isReady": (normalized_end - normalized_start) > 0,
+        "source": "audio-onset-finder-viewer",
+        "selectionModel": "onset-editor-region",
+        "currentTarget": "viewer-region",
+        "timeRangeSec": {
+            "start": normalized_start,
+            "end": normalized_end,
+            "duration": max(0.0, normalized_end - normalized_start),
+        },
+        "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }
+
+
+def _clear_audio_manager_publish_cache(*, workspace_root: str | Path | None = None) -> None:
+    workspace = _resolve_workspace_root(workspace_root)
+    LOCAL_INTEGRATION_AUDIO_MANAGER_CACHE[str(workspace)] = {}
+
+
+def _audio_manager_publish_cache(workspace_root: str | Path | None = None) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    key = str(workspace)
+    cache = LOCAL_INTEGRATION_AUDIO_MANAGER_CACHE.get(key)
+    if isinstance(cache, dict):
+        return cache
+    LOCAL_INTEGRATION_AUDIO_MANAGER_CACHE[key] = {}
+    return LOCAL_INTEGRATION_AUDIO_MANAGER_CACHE[key]
+
+
+def get_local_integration_session_state(
+    *,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-state-read",
+    )
+    return _run_local_integration_command(
+        {
+            "command": "session/get_state",
+            "workspaceRoot": str(workspace),
+            "payload": {
+                "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+            },
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+
+
+def publish_audio_onset_asset_state(
+    audio_path: str | Path,
+    *,
+    asset_label: str = "",
+    active_revision_id: str = "",
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-open-asset",
+    )
+    response = _run_local_integration_command(
+        {
+            "command": "session/open_asset",
+            "workspaceRoot": str(workspace),
+            "payload": {
+                "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+                "asset": _build_audio_onset_asset_payload(
+                    audio_path,
+                    asset_label=asset_label,
+                    active_revision_id=active_revision_id,
+                    workspace_root=workspace,
+                ),
+                "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+            },
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+    cache = _audio_manager_publish_cache(workspace)
+    cache["assetKey"] = json.dumps(_mapping_or_empty(_mapping_or_empty(response.get("session")).get("asset")), sort_keys=True)
+    return response
+
+
+def publish_audio_onset_playhead(
+    playhead_sec: float,
+    *,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+    force: bool = False,
+    min_interval_sec: float = 0.15,
+    min_delta_sec: float = 0.1,
+) -> dict[str, Any]:
+    normalized_playhead_sec = _float_or_none(playhead_sec)
+    if normalized_playhead_sec is None:
+        raise ValueError("AudioOnsetFinder playhead publish requires a numeric playheadSec.")
+
+    workspace = _resolve_workspace_root(workspace_root)
+    cache = _audio_manager_publish_cache(workspace)
+    now = time.monotonic()
+    last_published_at = _float_or_none(cache.get("playheadPublishedAt")) or 0.0
+    last_playhead_sec = _float_or_none(cache.get("playheadSec"))
+    if (
+        not force
+        and last_playhead_sec is not None
+        and abs(normalized_playhead_sec - last_playhead_sec) < float(min_delta_sec)
+        and (now - last_published_at) < float(min_interval_sec)
+    ):
+        return {}
+
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-transport-time",
+    )
+    response = _run_local_integration_command(
+        {
+            "command": "transport/set_time",
+            "workspaceRoot": str(workspace),
+            "payload": {
+                "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+                "playheadSec": normalized_playhead_sec,
+                "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+            },
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+    cache["playheadSec"] = normalized_playhead_sec
+    cache["playheadPublishedAt"] = now
+    return response
+
+
+def publish_audio_onset_selection(
+    start_sec: float,
+    end_sec: float,
+    *,
+    playhead_sec: float | None = None,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-transport-selection",
+    )
+
+    payload: dict[str, Any] = {
+        "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+        "selectionWindow": _build_audio_onset_selection_window(start_sec, end_sec),
+        "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }
+    normalized_playhead_sec = _float_or_none(playhead_sec)
+    if normalized_playhead_sec is not None:
+        payload["playheadSec"] = normalized_playhead_sec
+
+    response = _run_local_integration_command(
+        {
+            "command": "transport/set_selection",
+            "workspaceRoot": str(workspace),
+            "payload": payload,
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+    cache = _audio_manager_publish_cache(workspace)
+    cache["selectionKey"] = json.dumps(payload["selectionWindow"], sort_keys=True)
+    if normalized_playhead_sec is not None:
+        cache["playheadSec"] = normalized_playhead_sec
+        cache["playheadPublishedAt"] = time.monotonic()
+    return response
+
+
+def clear_audio_onset_selection(
+    *,
+    playhead_sec: float | None = None,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-clear-selection",
+    )
+
+    payload: dict[str, Any] = {
+        "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+        "selectionWindow": {
+            "isReady": False,
+            "source": "audio-onset-finder-viewer",
+            "selectionModel": "onset-editor-region",
+            "currentTarget": "viewer-region",
+            "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+        },
+        "updatedByShellId": LOCAL_INTEGRATION_HOST_SHELL_ID,
+    }
+    normalized_playhead_sec = _float_or_none(playhead_sec)
+    if normalized_playhead_sec is not None:
+        payload["playheadSec"] = normalized_playhead_sec
+
+    response = _run_local_integration_command(
+        {
+            "command": "transport/set_selection",
+            "workspaceRoot": str(workspace),
+            "payload": payload,
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+    cache = _audio_manager_publish_cache(workspace)
+    cache["selectionKey"] = json.dumps(payload["selectionWindow"], sort_keys=True)
+    if normalized_playhead_sec is not None:
+        cache["playheadSec"] = normalized_playhead_sec
+        cache["playheadPublishedAt"] = time.monotonic()
+    return response
 
 
 def _load_manifest_service_descriptor(manifest_path: str | Path | None) -> dict[str, Any]:
@@ -486,8 +780,13 @@ __all__ = [
     "build_audio_graphs_open_companion_envelope",
     "build_audio_onset_bootstrap_envelope",
     "build_audio_onset_attach_envelope",
+    "clear_audio_onset_selection",
     "consume_local_integration_launch_args",
     "ensure_local_integration_session",
+    "get_local_integration_session_state",
     "open_audio_graphs_companion",
+    "publish_audio_onset_asset_state",
+    "publish_audio_onset_playhead",
+    "publish_audio_onset_selection",
     "resolve_local_integration_bootstrap_path",
 ]

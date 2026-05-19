@@ -103,7 +103,23 @@ def _save_session(
     )
     manifest_path = resolve_session_manifest_path(workspace_root, manifest["sessionId"])
     save_session_manifest(manifest_path, manifest)
+    _sync_persistent_service_session_state(manifest)
     return manifest, manifest_path
+
+
+def _sync_persistent_service_session_state(manifest: dict[str, Any]) -> None:
+    service_descriptor = _mapping_or_empty(manifest.get("service"))
+    endpoint = _text_or_empty(service_descriptor.get("endpoint"))
+    transport = _text_or_empty(service_descriptor.get("transport"))
+    if not endpoint or transport == "stdio":
+        return
+
+    try:
+        from services.local_integration.service_runtime import send_service_command
+
+        send_service_command(endpoint, {"command": "session/sync_manifest"}, timeout=1.0)
+    except Exception:
+        return
 
 
 def _ensure_session(envelope: dict[str, Any]) -> tuple[dict[str, Any], Path]:

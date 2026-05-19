@@ -35,6 +35,7 @@ def _ensure_shared_package_path() -> Path:
 
 WORKSPACE_ROOT = _ensure_shared_package_path()
 
+from services.local_integration.audio_manager import AudioManager  # noqa: E402
 from wild_audio_worlds.session.session_manifest import build_session_summary  # noqa: E402
 
 
@@ -219,6 +220,11 @@ class _ServiceState:
 		self.owner_shell_id = owner_shell_id
 		self.owner_shell_type = owner_shell_type
 		self.started_at = _iso_now()
+		self.audio_manager = AudioManager(
+			workspace_root,
+			session_id,
+			service_descriptor_provider=self.descriptor,
+		)
 		self._jobs: dict[str, _JobRecord] = {}
 		self._lock = threading.Lock()
 
@@ -258,6 +264,149 @@ class _ServiceState:
 				if job.status in {"queued", "running", "cancel-requested"}
 			]
 		return jobs
+
+	def _requested_session_id(self, envelope: dict[str, Any]) -> str:
+		payload = _mapping_or_empty(envelope.get("payload"))
+		session_payload = _mapping_or_empty(envelope.get("session"))
+		return (
+			_text_or_empty(payload.get("sessionId"))
+			or _text_or_empty(envelope.get("sessionId"))
+			or _text_or_empty(session_payload.get("sessionId"))
+		)
+
+	def _ensure_matching_session(self, envelope: dict[str, Any], *, command: str) -> None:
+		requested_session_id = self._requested_session_id(envelope)
+		if requested_session_id and requested_session_id != self.session_id:
+			raise ValueError(
+				f"{command} requested sessionId {requested_session_id}, but this persistent service owns {self.session_id}."
+			)
+
+	def _audio_manager_snapshot(self, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+		return self.audio_manager.state_snapshot(manifest)
+
+	def _audio_manager_response_fields(self, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
+		normalized_manifest = _mapping_or_empty(manifest) if manifest is not None else self.audio_manager.current_manifest()
+		if not normalized_manifest:
+			normalized_manifest = {
+				"sessionId": self.session_id,
+				"service": self.descriptor(),
+			}
+		session_summary = build_session_summary(normalized_manifest, self.audio_manager.manifest_path)
+		return {
+			"session": session_summary,
+			"sessionId": session_summary["sessionId"],
+			"mode": session_summary["mode"],
+			"stateRevision": session_summary["stateRevision"],
+			"manifestPath": session_summary["manifestPath"],
+			"service": _mapping_or_empty(normalized_manifest.get("service")) or self.descriptor(),
+			"manifest": normalized_manifest,
+			"audioManager": self._audio_manager_snapshot(normalized_manifest),
+		}
+
+	def handle_session_state_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="session/get_state")
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(),
+		}
+
+	def handle_manifest_sync_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="session/sync_manifest")
+		manifest = self.audio_manager.sync_from_disk()
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_open_asset_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="session/open_asset")
+		manifest = self.audio_manager.open_asset(_mapping_or_empty(envelope.get("payload")))
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_clear_asset_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="session/clear_asset")
+		manifest = self.audio_manager.clear_asset(_mapping_or_empty(envelope.get("payload")))
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_transport_time_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="transport/set_time")
+		manifest = self.audio_manager.set_playhead(_mapping_or_empty(envelope.get("payload")))
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_transport_selection_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="transport/set_selection")
+		manifest = self.audio_manager.set_selection(_mapping_or_empty(envelope.get("payload")))
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_asset_revision_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="asset/set_revision")
+		manifest = self.audio_manager.set_revision(_mapping_or_empty(envelope.get("payload")))
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_manifest_session_command(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		bootstrap_service = self._bootstrap_module()
+		command = _text_or_empty(envelope.get("command"))
+		self._ensure_matching_session(envelope, command=command)
+		existing_manifest = self.audio_manager.current_manifest() or self.audio_manager.sync_from_disk()
+		if not existing_manifest:
+			_ignored_workspace_root, existing_manifest, _ignored_manifest_path = bootstrap_service._load_existing_session(
+				envelope,
+				command=command,
+			)
+			self.audio_manager.sync_from_manifest(existing_manifest)
+
+		if command == "shell/open_companion":
+			session_payload, launched_shell = bootstrap_service._build_open_companion_session_payload(envelope, existing_manifest)
+			manifest = self.audio_manager.apply_session_payload(session_payload, existing_manifest=existing_manifest)
+			session_summary, response_fields = bootstrap_service._build_session_response_fields(manifest, self.audio_manager.manifest_path)
+			return {
+				"ok": True,
+				"session": session_summary,
+				**response_fields,
+				"launchedShell": launched_shell,
+				"audioManager": self._audio_manager_snapshot(manifest),
+			}
+
+		if command == "session/attach":
+			session_payload, attached_shell = bootstrap_service._build_session_attach_payload(envelope, existing_manifest)
+			manifest = self.audio_manager.apply_session_payload(session_payload, existing_manifest=existing_manifest)
+			session_summary, response_fields = bootstrap_service._build_session_response_fields(manifest, self.audio_manager.manifest_path)
+			return {
+				"ok": True,
+				"session": session_summary,
+				**response_fields,
+				"attachedShell": attached_shell,
+				"audioManager": self._audio_manager_snapshot(manifest),
+			}
+
+		if command == "session/detach":
+			session_payload, detached_shell = bootstrap_service._build_session_detach_payload(envelope, existing_manifest)
+			manifest = self.audio_manager.apply_session_payload(session_payload, existing_manifest=existing_manifest)
+			session_summary, response_fields = bootstrap_service._build_session_response_fields(manifest, self.audio_manager.manifest_path)
+			return {
+				"ok": True,
+				"session": session_summary,
+				**response_fields,
+				"detachedShell": detached_shell,
+				"audioManager": self._audio_manager_snapshot(manifest),
+			}
+
+		raise ValueError(f"Unsupported manifest-backed session command: {command}")
 
 	def _create_job(self, command: str, session_id: str) -> _JobRecord:
 		job = _JobRecord(
@@ -443,10 +592,12 @@ class _ServiceState:
 	def handle_runner_command(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		bootstrap_service = self._bootstrap_module()
 		command = _text_or_empty(envelope.get("command"))
+		self._ensure_matching_session(envelope, command=command)
 		workspace_root, existing_manifest, manifest_path = bootstrap_service._load_existing_session(
 			envelope,
 			command=command,
 		)
+		self.audio_manager.sync_from_manifest(existing_manifest)
 		session_summary = build_session_summary(existing_manifest, manifest_path)
 		payload = bootstrap_service._mapping_or_empty(envelope.get("payload"))
 		graph_project_root = bootstrap_service._resolve_graph_project_root(envelope, workspace_root)
@@ -462,12 +613,12 @@ class _ServiceState:
 			self._cancel_job(supersedes_job_id, superseded_by=job.job_id)
 
 		response = self._run_runner_job(job, command, runner_path, payload, cwd=graph_project_root)
+		session_fields = self._audio_manager_response_fields(existing_manifest)
 		return {
 			"ok": True,
-			"session": session_summary,
+			**session_fields,
 			"response": response,
 			"job": self._job_summary(job),
-			"service": self.descriptor(),
 		}
 
 
@@ -512,8 +663,7 @@ class _LocalIntegrationSocketServer(_ThreadingUnixStreamServer):
 		if command == "service/ping":
 			return {
 				"ok": True,
-				"sessionId": self.state.session_id,
-				"service": self.state.descriptor(),
+				**self.state._audio_manager_response_fields(),
 				"serviceState": {
 					"startedAt": self.state.started_at,
 					"activeJobs": self.state._active_job_summaries(),
@@ -524,13 +674,36 @@ class _LocalIntegrationSocketServer(_ThreadingUnixStreamServer):
 			threading.Thread(target=self.shutdown, daemon=True).start()
 			return {
 				"ok": True,
-				"sessionId": self.state.session_id,
-				"service": self.state.descriptor(),
+				**self.state._audio_manager_response_fields(),
 				"serviceState": {
 					"startedAt": self.state.started_at,
 					"shuttingDown": True,
 				},
 			}
+
+		if command == "session/sync_manifest":
+			return self.state.handle_manifest_sync_request(envelope)
+
+		if command in {"session/get_state", "data/get_asset_state"}:
+			return self.state.handle_session_state_request(envelope)
+
+		if command == "session/open_asset":
+			return self.state.handle_open_asset_request(envelope)
+
+		if command == "session/clear_asset":
+			return self.state.handle_clear_asset_request(envelope)
+
+		if command == "transport/set_time":
+			return self.state.handle_transport_time_request(envelope)
+
+		if command == "transport/set_selection":
+			return self.state.handle_transport_selection_request(envelope)
+
+		if command == "asset/set_revision":
+			return self.state.handle_asset_revision_request(envelope)
+
+		if command in {"shell/open_companion", "session/attach", "session/detach"}:
+			return self.state.handle_manifest_session_command(envelope)
 
 		if command == "job/cancel":
 			return self.state.handle_job_cancel_request(envelope)
