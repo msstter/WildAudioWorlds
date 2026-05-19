@@ -1,5 +1,6 @@
 import json
 import sys
+import wave
 from pathlib import Path
 
 import numpy as np
@@ -18,6 +19,11 @@ if str(GRAPH_BACKEND_DIR) not in sys.path:
 
 
 from main import process_audio_file  # noqa: E402
+from bioacoustics_workbook import sync_workbook_onsets  # noqa: E402
+from run_selection_analysis import (  # noqa: E402
+    _resolve_bio_sync_output_path,
+    _save_result,
+)
 from wild_audio_worlds.data import DataManager  # noqa: E402
 from wild_audio_worlds.data.audio_asset_store import (  # noqa: E402
     load_manifest_entries as compatibility_load_manifest_entries,
@@ -180,3 +186,126 @@ def test_audio_asset_store_manifest_helpers_delegate_to_data_manager(tmp_path):
 
     assert manifest_payload["managedBy"] == "wild_audio_worlds.data.DataManager"
     assert manifest_payload["manifestRevision"] == 1
+
+
+def test_data_manager_publishes_backend_call_json_and_wav_exports(tmp_path):
+    data_manager = DataManager(tmp_path)
+
+    json_export_path = data_manager.publish_backend_call_json_export(
+        {
+            "ok": True,
+            "analysisType": "slice-summary",
+        },
+        label="Marsh Dawn",
+        analysis_type="slice-summary",
+        request_id="abc12345",
+    )
+    wav_export_path = data_manager.publish_backend_call_wav_export(
+        np.array([0.0, 0.25, -0.25], dtype=np.float32),
+        sample_rate=24000,
+        label="Marsh Dawn",
+        analysis_type="export-time-slice-audio",
+        request_id="def67890",
+    )
+
+    assert json_export_path == tmp_path / "data" / "exports" / "backend_calls" / "marsh-dawn_slice-summary_abc12345.json"
+    assert wav_export_path == tmp_path / "data" / "exports" / "backend_calls" / "marsh-dawn_export-time-slice-audio_def67890.wav"
+
+    with json_export_path.open("r", encoding="utf-8") as handle:
+        payload = json.load(handle)
+    assert payload == {
+        "ok": True,
+        "analysisType": "slice-summary",
+    }
+
+    with wave.open(str(wav_export_path), "rb") as wav_file:
+        assert wav_file.getframerate() == 24000
+        assert wav_file.getnframes() == 3
+
+
+def test_run_selection_analysis_save_result_routes_exports_through_data_manager(tmp_path, monkeypatch):
+    monkeypatch.setattr("run_selection_analysis._project_root", lambda: tmp_path)
+
+    json_save_result = _save_result({
+        "analysisType": "slice-summary",
+        "asset": {
+            "id": "asset-marsh-001",
+            "label": "Marsh Dawn",
+        },
+        "callMeta": {
+            "requestId": "jsonreq1",
+        },
+        "saveOptions": {
+            "mode": "json",
+            "label": "Marsh Dawn",
+        },
+        "result": {
+            "summary": {
+                "durationSec": 1.25,
+            },
+        },
+    })
+
+    wav_save_result = _save_result({
+        "analysisType": "export-time-slice-audio",
+        "asset": {
+            "id": "asset-marsh-001",
+            "label": "Marsh Dawn",
+        },
+        "callMeta": {
+            "requestId": "wavreq1",
+        },
+        "saveOptions": {
+            "mode": "wav",
+            "label": "Marsh Dawn",
+        },
+    }, save_artifact={
+        "type": "wav",
+        "audio": np.array([0.0, 0.1, -0.1, 0.2], dtype=np.float32),
+        "sampleRate": 22050,
+    })
+
+    assert json_save_result["path"] == "data/exports/backend_calls/marsh-dawn_slice-summary_jsonreq1.json"
+    assert wav_save_result["path"] == "data/exports/backend_calls/marsh-dawn_export-time-slice-audio_wavreq1.wav"
+    assert (tmp_path / json_save_result["path"]).exists()
+    assert (tmp_path / wav_save_result["path"]).exists()
+
+
+def test_bio_sync_output_fallback_and_workbook_write_route_through_data_manager(tmp_path, monkeypatch):
+    monkeypatch.setattr("run_selection_analysis._project_root", lambda: tmp_path)
+    output_path = _resolve_bio_sync_output_path({
+        "bioacoustics": {
+            "outputMode": "export",
+        },
+        "saveOptions": {
+            "label": "Wetland Focus",
+        },
+    }, "wetland.wav")
+
+    assert output_path == tmp_path / "data" / "exports" / "backend_calls" / "wetland-focus_bioacoustics.xlsx"
+
+    real_writer = DataManager.write_workbook_sheets
+    delegated_call = {}
+
+    def _recording_writer(path_value, workbook_sheets):
+        delegated_call["outputPath"] = Path(path_value)
+        delegated_call["sheetNames"] = sorted(workbook_sheets.keys())
+        return real_writer(path_value, workbook_sheets)
+
+    monkeypatch.setattr(DataManager, "write_workbook_sheets", staticmethod(_recording_writer))
+
+    workbook_result = sync_workbook_onsets(
+        tmp_path / "template.xlsx",
+        "wetland.wav",
+        [0.1, 0.3, 0.6],
+        output_path=output_path,
+    )
+
+    assert delegated_call["outputPath"] == output_path
+    assert delegated_call["sheetNames"] == [
+        "Dyadic Events (For Plots)",
+        "Dyadic Events (Stable Rhythms)",
+        "File Summaries",
+    ]
+    assert Path(workbook_result["outputWorkbookPath"]) == output_path.resolve()
+    assert output_path.exists()

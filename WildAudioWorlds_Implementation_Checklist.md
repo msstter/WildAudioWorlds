@@ -62,6 +62,7 @@ Last updated: 2026-05-19
 - [x] Validate the reverse AudioOnsetFinder-to-Electron shared-session shell-edge path with focused Python contract tests plus Electron CJS smoke and syntax checks
 - [x] Validate `session/detach` plus linked-session launch-failure, attach-failure, and session-reuse behavior with focused Python contract tests
 - [x] Validate the first DataManager extraction around graph-asset publication, manifest ownership, compatibility helper delegation, and stale manifest-write rejection with focused Python contract tests
+- [x] Validate the next DataManager extraction around backend-call export publication, workbook-write delegation, and non-graph derived artifact path authority with focused Python contract tests
 
 ## Immediate Next
 
@@ -76,6 +77,12 @@ Last updated: 2026-05-19
 - [x] Route `3DAudioGraphs-main/backend/main.py` graph asset publication through DataManager while preserving the renderer-facing `audio_assets_manifest.json` contract
 - [x] Publish graph assets into per-asset revision directories and add manifest-level revision metadata so new derived revisions do not overwrite prior artifact paths in place
 - [x] Route the legacy shared `audio_asset_store` manifest write helpers through DataManager so compatibility callers still land on the same single-writer path
+
+## Newly Completed DataManager Export Slice
+
+- [x] Extend DataManager with backend-call JSON/WAV export publication helpers so `run_selection_analysis.py` no longer writes those artifacts directly
+- [x] Route the bioacoustics workbook writer through DataManager so current non-graph derived artifact writes also flow through the shared filesystem authority
+- [x] Move backend-call export path generation under DataManager so fallback XLSX exports and save-result paths stay aligned with the managed export root
 
 ## Newly Completed Step 5 Prep
 
@@ -124,5 +131,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, focused linked-session acceptance coverage, and the first DataManager slice for graph-asset publication
-- The highest-leverage next move is to keep extending DataManager across the remaining direct writer paths, especially backend-call/export publication and broader path authority
+- Current implementation phase: Step 4 is well underway, and Step 5 now includes explicit attach/open/detach bootstrap commands, real shell edges in both directions, focused linked-session acceptance coverage, and DataManager ownership for the current graph compatibility path's derived-artifact writes
+- The highest-leverage next move is to extend DataManager beyond the current graph compatibility path into source-input publication and onset-side derived artifact writes before starting AudioManager

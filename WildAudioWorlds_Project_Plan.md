@@ -34,8 +34,9 @@ As of 2026-05-19, the project is no longer at planning-only stage. The baseline 
 - The thin bootstrap now also accepts explicit `session/detach`, and the shared manifest helper can remove peers and downgrade linked sessions back to standalone without losing the session identity or host-shell context.
 - Focused acceptance coverage now also exercises shell-edge launch failure, companion attach failure, `session/detach`, and linked-session reuse/re-attach behavior using narrow Python contract tests.
 - A first DataManager slice now exists in the shared `data/` package: graph-asset publication, asset-manifest ownership, manifest revision metadata, compatibility helper delegation, and per-asset revision directories are now routed through a shared Python DataManager instead of shell-local file writes.
-- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open/detach command handlers, bidirectional shell edges, the first failure/reuse checks, and the first DataManager slice now exist, but full DataManager path authority and AudioManager are still not implemented.
-- The most important next move is to keep extending DataManager to the remaining direct writer paths before starting AudioManager session authority.
+- A second DataManager slice now covers backend-call JSON/WAV export publication, bioacoustics workbook-write delegation, and fallback non-graph export path generation, so the current 3DAudioGraphs compatibility path no longer writes derived artifacts directly outside DataManager.
+- The project is effectively late Step 5: shared packaging, compatibility extraction, the first attach/session contract draft, the bootstrap path, explicit attach/open/detach command handlers, bidirectional shell edges, the first failure/reuse checks, and DataManager authority over the current graph compatibility path now exist, but broader cross-app DataManager path authority and AudioManager are still not implemented.
+- The most important next move is to extend DataManager into source-input publication and onset-side derived artifact writes before starting AudioManager session authority.
 
 ## 2. Current Baseline
 
@@ -420,7 +421,8 @@ Current slice status:
 
 - A first shared DataManager now owns graph-asset manifest writes plus graph-asset publication from `3DAudioGraphs-main/backend/main.py`.
 - The first extraction preserves the current renderer-facing `audio_assets_manifest.json` contract while publishing new asset revisions into immutable per-revision directories.
-- Remaining direct writer paths, including broader export publication and non-graph derived artifacts, still need to move behind DataManager before this step is complete.
+- DataManager now also owns backend-call JSON/WAV export publication plus the current bioacoustics workbook writer delegation and fallback XLSX export path generation from `run_selection_analysis.py` and `bioacoustics_workbook.py`.
+- Remaining work is now concentrated in source-input publication and onset-side derived artifact writers that still live outside the shared DataManager boundary.
 
 Exit criteria: no analysis module writes paths directly outside DataManager-owned roots.
 

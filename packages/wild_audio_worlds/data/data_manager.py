@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 import shutil
+import wave
 from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 
 from .audio_asset_store import GraphProjectPaths, build_project_paths
 
@@ -56,9 +58,32 @@ def _slugify(value: str) -> str:
 
 def _write_json_atomic(destination_path: Path, payload: dict[str, Any]) -> None:
     destination_path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = destination_path.with_name(f"{destination_path.name}.tmp")
+    temp_path = _build_temp_output_path(destination_path)
     with temp_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
+    temp_path.replace(destination_path)
+
+
+def _build_temp_output_path(destination_path: Path) -> Path:
+    if destination_path.suffix:
+        return destination_path.with_name(f"{destination_path.stem}.tmp{destination_path.suffix}")
+    return destination_path.with_name(f"{destination_path.name}.tmp")
+
+
+def _write_wav_pcm16_atomic(destination_path: Path, audio_data: Any, sample_rate: Any) -> None:
+    audio = np.asarray(audio_data, dtype=np.float32)
+    if audio.ndim != 1:
+        audio = np.reshape(audio, (-1,))
+    clipped = np.clip(audio, -1.0, 1.0)
+    pcm16 = np.asarray(np.round(clipped * 32767.0), dtype=np.int16)
+
+    destination_path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = _build_temp_output_path(destination_path)
+    with wave.open(str(temp_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(max(1, _coerce_int(sample_rate, 22050)))
+        wav_file.writeframes(pcm16.tobytes())
     temp_path.replace(destination_path)
 
 
@@ -69,6 +94,7 @@ class DataManager:
         self.manifest_path = Path(self.paths["manifest_path"]).resolve()
         self.public_assets_dir = Path(self.paths["public_assets_dir"]).resolve()
         self.exports_dir = Path(self.paths["exports_dir"]).resolve()
+        self.backend_call_exports_dir = (self.exports_dir / "backend_calls").resolve()
 
     @staticmethod
     def resolve_project_root_from_manifest_path(manifest_path: str | Path) -> Path:
@@ -155,6 +181,76 @@ class DataManager:
         }
         _write_json_atomic(self.manifest_path, next_payload)
         return next_payload
+
+    def relative_to_project_root(self, path_value: str | Path) -> str:
+        path_obj = Path(path_value).resolve()
+        try:
+            return str(path_obj.relative_to(self.project_root))
+        except ValueError:
+            return str(path_obj)
+
+    def build_backend_call_export_path(
+        self,
+        label: str,
+        *,
+        extension: str,
+        analysis_type: str = "",
+        request_id: str = "",
+    ) -> Path:
+        stem_parts = [_slugify(label)]
+        if analysis_type:
+            stem_parts.append(_slugify(analysis_type))
+        if request_id:
+            stem_parts.append(_slugify(request_id))
+        file_name = f"{'_'.join(part for part in stem_parts if part)}{extension}"
+        export_path = self.backend_call_exports_dir / file_name
+        export_path.parent.mkdir(parents=True, exist_ok=True)
+        return export_path
+
+    def publish_backend_call_json_export(
+        self,
+        payload: dict[str, Any],
+        *,
+        label: str,
+        analysis_type: str,
+        request_id: str,
+    ) -> Path:
+        export_path = self.build_backend_call_export_path(
+            label,
+            extension=".json",
+            analysis_type=analysis_type,
+            request_id=request_id,
+        )
+        _write_json_atomic(export_path, _mapping_or_empty(payload))
+        return export_path
+
+    def publish_backend_call_wav_export(
+        self,
+        audio_data: Any,
+        *,
+        sample_rate: Any,
+        label: str,
+        analysis_type: str,
+        request_id: str,
+    ) -> Path:
+        export_path = self.build_backend_call_export_path(
+            label,
+            extension=".wav",
+            analysis_type=analysis_type,
+            request_id=request_id,
+        )
+        _write_wav_pcm16_atomic(export_path, audio_data, sample_rate)
+        return export_path
+
+    @staticmethod
+    def write_workbook_sheets(output_path: str | Path, workbook_sheets: dict[str, pd.DataFrame]) -> None:
+        destination_path = Path(output_path)
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = _build_temp_output_path(destination_path)
+        with pd.ExcelWriter(temp_path, engine="openpyxl") as writer:
+            for sheet_name, dataframe in workbook_sheets.items():
+                dataframe.to_excel(writer, sheet_name=sheet_name, index=False)
+        temp_path.replace(destination_path)
 
     def upsert_manifest_entry(
         self,

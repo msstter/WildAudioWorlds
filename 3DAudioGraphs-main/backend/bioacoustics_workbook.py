@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from scipy.stats import entropy as scipy_entropy
 
+from wild_audio_worlds.data import DataManager
+
 
 SUMMARY_SHEET_NAME = 'File Summaries'
 DYADS_SHEET_NAME = 'Dyadic Events (For Plots)'
@@ -311,10 +313,7 @@ def load_onsets_for_audio(
 
 
 def _write_workbook_sheets(output_path: Path, workbook_sheets: dict[str, pd.DataFrame]) -> None:
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
-        for sheet_name, dataframe in workbook_sheets.items():
-            dataframe.to_excel(writer, sheet_name=sheet_name, index=False)
+    DataManager.write_workbook_sheets(output_path, workbook_sheets)
 
 
 def sync_workbook_onsets(

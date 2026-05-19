@@ -11,6 +11,7 @@ import librosa
 import numpy as np
 
 from shared_graph_paths import resolve_graph_project_root
+from wild_audio_worlds.data import DataManager
 from wild_audio_worlds.session.analysis_types import (
     BACKEND_ANALYSIS_TYPE_CONFIGS,
     DEFAULT_BACKEND_ANALYSIS_TYPE,
@@ -45,6 +46,10 @@ AUTO_DISCOVER_BIO_SEARCH_ROOTS = ("data", "backend/data")
 
 def _project_root():
     return resolve_graph_project_root(anchor_file=__file__)
+
+
+def _data_manager():
+    return DataManager(_project_root())
 
 
 def _slugify(value):
@@ -214,11 +219,7 @@ def _resolve_asset_audio_filename(asset_payload, bio_payload=None):
 
 
 def _relative_output_path(path_value):
-    path_obj = Path(path_value)
-    try:
-        return str(path_obj.resolve().relative_to(_project_root()))
-    except ValueError:
-        return str(path_obj.resolve())
+    return _data_manager().relative_to_project_root(path_value)
 
 
 def _normalize_onset_times(onset_times):
@@ -261,9 +262,11 @@ def _resolve_bio_sync_output_path(payload, audio_filename):
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir / f"AudioData_OnsetFinder_{label_stem}.xlsx"
 
-    export_dir = _project_root() / "data" / "exports" / "backend_calls"
-    export_dir.mkdir(parents=True, exist_ok=True)
-    return export_dir / f"{label_stem}_bioacoustics.xlsx"
+    return _data_manager().build_backend_call_export_path(
+        label_stem,
+        extension=".xlsx",
+        analysis_type="bioacoustics",
+    )
 
 
 def _iter_auto_discovery_workbook_paths():
@@ -695,20 +698,6 @@ ANALYSIS_RUNNERS = _build_runner_registry("analysis")
 BIOACOUSTICS_RUNNERS = _build_runner_registry("bioacoustics")
 
 
-def _write_wav_pcm16(export_path, y, sr):
-    audio = np.asarray(y, dtype=np.float32)
-    if audio.ndim != 1:
-        audio = np.reshape(audio, (-1,))
-    clipped = np.clip(audio, -1.0, 1.0)
-    pcm16 = np.asarray(np.round(clipped * 32767.0), dtype=np.int16)
-
-    with wave.open(str(export_path), "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(max(1, _coerce_int(sr, DEFAULT_SAMPLE_RATE)))
-        wav_file.writeframes(pcm16.tobytes())
-
-
 def _save_result(payload, save_artifact=None):
     save_options = payload.get("saveOptions") or {}
     save_mode = str(save_options.get("mode") or "json").strip().lower()
@@ -719,45 +708,49 @@ def _save_result(payload, save_artifact=None):
             "path": None,
         })
 
-    export_dir = _project_root() / "data" / "exports" / "backend_calls"
-    export_dir.mkdir(parents=True, exist_ok=True)
-
     asset = payload.get("asset") or {}
     call_meta = payload.get("callMeta") or {}
     label = save_options.get("label") or asset.get("label") or asset.get("id") or "selection-analysis"
     request_id = str(call_meta.get("requestId") or uuid4())[:8]
+    analysis_type = str(payload.get("analysisType") or "selection-analysis")
+    data_manager = _data_manager()
 
     if save_mode == "wav":
         if not isinstance(save_artifact, dict) or save_artifact.get("type") != "wav":
             raise ValueError("This backend action does not provide WAV export data.")
 
-        filename = f"{_slugify(label)}_{_slugify(payload.get('analysisType'))}_{request_id}.wav"
-        export_path = export_dir / filename
         audio_data = save_artifact.get("audio")
         if audio_data is None:
             audio_data = np.zeros(0, dtype=np.float32)
-        _write_wav_pcm16(export_path, audio_data, save_artifact.get("sampleRate"))
+        export_path = data_manager.publish_backend_call_wav_export(
+            audio_data,
+            sample_rate=save_artifact.get("sampleRate"),
+            label=label,
+            analysis_type=analysis_type,
+            request_id=request_id,
+        )
         sample_rate = max(1, _coerce_int(save_artifact.get("sampleRate"), DEFAULT_SAMPLE_RATE))
         sample_count = int(np.asarray(audio_data, dtype=np.float32).size)
         return enrich_backend_save_result({
             "mode": "wav",
             "saved": True,
-            "path": str(export_path.relative_to(_project_root())),
+            "path": data_manager.relative_to_project_root(export_path),
             "sampleRate": sample_rate,
             "sampleCount": sample_count,
             "durationSec": float(sample_count / sample_rate) if sample_rate else 0.0,
         })
 
-    filename = f"{_slugify(label)}_{_slugify(payload.get('analysisType'))}_{request_id}.json"
-    export_path = export_dir / filename
-
-    with export_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
+    export_path = data_manager.publish_backend_call_json_export(
+        payload,
+        label=label,
+        analysis_type=analysis_type,
+        request_id=request_id,
+    )
 
     return enrich_backend_save_result({
         "mode": "json",
         "saved": True,
-        "path": str(export_path.relative_to(_project_root())),
+        "path": data_manager.relative_to_project_root(export_path),
     })
 
 
