@@ -84,6 +84,8 @@ def test_persistent_service_audio_manager_owns_asset_transport_and_revision_stat
 				"assetId": "asset-rain-002",
 				"assetLabel": "Rain Chorus",
 				"activeRevisionId": "rev-0012",
+				"audioUrl": "file:///tmp/rain-chorus.wav",
+				"analysisClipDurationSec": 9.75,
 			},
 			"transportState": {
 				"playheadSec": 4.25,
@@ -94,6 +96,8 @@ def test_persistent_service_audio_manager_owns_asset_transport_and_revision_stat
 
 	assert open_asset_response["ok"] is True
 	assert open_asset_response["session"]["asset"]["assetId"] == "asset-rain-002"
+	assert open_asset_response["session"]["asset"]["audioUrl"] == "file:///tmp/rain-chorus.wav"
+	assert open_asset_response["session"]["asset"]["analysisClipDurationSec"] == 9.75
 	assert open_asset_response["session"]["transportState"]["playheadSec"] == 4.25
 
 	selection_response = send_service_command(endpoint, {
@@ -131,18 +135,20 @@ def test_persistent_service_audio_manager_owns_asset_transport_and_revision_stat
 	})
 
 	assert state_response["ok"] is True
-	assert state_response["session"]["asset"] == {
-		"assetId": "asset-rain-002",
-		"assetLabel": "Rain Chorus",
-		"activeRevisionId": "rev-0013",
-		"updatedByShellId": "shell-aof-001",
-	}
+	assert state_response["session"]["asset"]["assetId"] == "asset-rain-002"
+	assert state_response["session"]["asset"]["assetLabel"] == "Rain Chorus"
+	assert state_response["session"]["asset"]["activeRevisionId"] == "rev-0013"
+	assert state_response["session"]["asset"]["updatedByShellId"] == "shell-aof-001"
+	assert state_response["session"]["asset"]["audioUrl"] == "file:///tmp/rain-chorus.wav"
+	assert state_response["session"]["asset"]["analysisClipDurationSec"] == 9.75
 	assert state_response["session"]["transportState"]["playheadSec"] == 4.25
 	assert state_response["session"]["transportState"]["selectionWindow"]["updatedByShellId"] == "shell-graph-001"
 
 	manifest = load_session_manifest(manifest_path)
 	assert manifest["asset"]["assetId"] == "asset-rain-002"
 	assert manifest["asset"]["activeRevisionId"] == "rev-0013"
+	assert manifest["asset"]["audioUrl"] == "file:///tmp/rain-chorus.wav"
+	assert manifest["asset"]["analysisClipDurationSec"] == 9.75
 	assert manifest["transportState"]["selectionWindow"]["selectionModel"] == "spectroterrain-full-sculpt"
 
 	clear_asset_response = send_service_command(endpoint, {
@@ -230,6 +236,51 @@ def test_persistent_service_attach_returns_audio_manager_snapshot(tmp_path):
 		"start": 20.0,
 		"end": 23.0,
 	}
+
+
+def test_persistent_service_emits_audio_manager_events(tmp_path):
+	bootstrap_response = _bootstrap_service(tmp_path)
+	endpoint = bootstrap_response["session"]["service"]["endpoint"]
+
+	initial_poll = send_service_command(endpoint, {
+		"command": "events/poll",
+		"payload": {
+			"afterEventId": 0,
+			"limit": 20,
+		},
+	})
+
+	assert initial_poll["ok"] is True
+	initial_latest_event_id = initial_poll["eventsState"]["latestEventId"]
+	assert initial_latest_event_id >= 0
+
+	transport_response = send_service_command(endpoint, {
+		"command": "transport/set_time",
+		"payload": {
+			"playheadSec": 33.75,
+			"updatedByShellId": "shell-graph-001",
+		},
+	})
+
+	assert transport_response["ok"] is True
+
+	poll_response = send_service_command(endpoint, {
+		"command": "events/poll",
+		"payload": {
+			"afterEventId": initial_latest_event_id,
+			"limit": 20,
+		},
+	})
+
+	assert poll_response["ok"] is True
+	assert poll_response["eventsState"]["latestEventId"] >= 1
+	assert len(poll_response["events"]) == 1
+	assert poll_response["events"][0]["kind"] == "transport/time_changed"
+	assert poll_response["events"][0]["stateRevision"] == transport_response["stateRevision"]
+	assert poll_response["events"][0]["payload"] == {
+		"playheadSec": 33.75,
+	}
+	assert poll_response["events"][0]["audioManager"]["transportState"]["playheadSec"] == 33.75
 
 
 def test_persistent_service_backend_call_returns_job_metadata(tmp_path):

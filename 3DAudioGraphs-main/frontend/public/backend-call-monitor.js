@@ -46,6 +46,16 @@ const viewState = {
     logs: [],
     latestResult: null,
     isRunning: false,
+    canonicalReadiness: {
+        ready: false,
+        pending: !!ipcRenderer,
+        message: ipcRenderer
+            ? 'Loading canonical backend readiness...'
+            : 'Open this page through the desktop app to run backend calls.',
+        selectionStatusMessage: '',
+    },
+    canonicalReadinessRequestId: 0,
+    canonicalReadinessTimer: null,
 };
 
 const MONITOR_FAILURE_FIELDS = [
@@ -231,6 +241,103 @@ const getBioacousticsOptions = () => ({
     outputMode: elements.bioOutputMode.value,
 });
 
+const getCanonicalReadinessState = () => viewState.canonicalReadiness && typeof viewState.canonicalReadiness === 'object'
+    ? viewState.canonicalReadiness
+    : {
+        ready: false,
+        pending: !!ipcRenderer,
+        message: ipcRenderer
+            ? 'Loading canonical backend readiness...'
+            : 'Open this page through the desktop app to run backend calls.',
+        selectionStatusMessage: '',
+    };
+
+const buildCanonicalReadinessRequest = () => {
+    const actionConfig = getCurrentActionConfig();
+    return {
+        analysisType: getCurrentActionType(),
+        bioacousticsState: actionConfig?.isBioacoustics
+            ? (viewState.currentState?.bioacoustics || null)
+            : undefined,
+        bioacousticsOptions: actionConfig?.isBioacoustics
+            ? getBioacousticsOptions()
+            : undefined,
+    };
+};
+
+const refreshCanonicalReadiness = async () => {
+    const requestId = ++viewState.canonicalReadinessRequestId;
+    if (!ipcRenderer) {
+        viewState.canonicalReadiness = {
+            ready: false,
+            pending: false,
+            message: 'Open this page through the desktop app to run backend calls.',
+            selectionStatusMessage: '',
+        };
+        renderAll();
+        return;
+    }
+
+    const actionConfig = getCurrentActionConfig();
+    if (!actionConfig) {
+        viewState.canonicalReadiness = {
+            ready: false,
+            pending: false,
+            message: 'Loading backend action metadata...',
+            selectionStatusMessage: '',
+        };
+        renderAll();
+        return;
+    }
+
+    viewState.canonicalReadiness = {
+        ...getCanonicalReadinessState(),
+        ready: false,
+        pending: true,
+        message: 'Loading canonical backend readiness...',
+    };
+    renderAll();
+
+    try {
+        const response = await ipcRenderer.invoke('backend-call:evaluate-readiness', buildCanonicalReadinessRequest());
+        if (requestId !== viewState.canonicalReadinessRequestId) {
+            return;
+        }
+        viewState.canonicalReadiness = {
+            ready: !!response?.readiness?.ready,
+            pending: false,
+            message: typeof response?.readiness?.message === 'string'
+                ? response.readiness.message.trim()
+                : '',
+            selectionStatusMessage: typeof response?.selectionStatusMessage === 'string'
+                ? response.selectionStatusMessage.trim()
+                : '',
+        };
+    } catch (error) {
+        if (requestId !== viewState.canonicalReadinessRequestId) {
+            return;
+        }
+        viewState.canonicalReadiness = {
+            ready: false,
+            pending: false,
+            message: error?.message || 'Failed to evaluate backend readiness from canonical session state.',
+            selectionStatusMessage: '',
+        };
+    }
+
+    renderAll();
+};
+
+const scheduleCanonicalReadinessRefresh = () => {
+    if (viewState.canonicalReadinessTimer) {
+        globalThis.clearTimeout(viewState.canonicalReadinessTimer);
+    }
+    viewState.canonicalReadinessTimer = globalThis.setTimeout(() => {
+        viewState.canonicalReadinessTimer = null;
+        void refreshCanonicalReadiness();
+    }, 40);
+};
+
 const evaluateActionReadiness = () => {
     if (!ipcRenderer) {
         return {
@@ -254,66 +361,18 @@ const evaluateActionReadiness = () => {
         };
     }
 
-    const readiness = actionConfig.readiness && typeof actionConfig.readiness === 'object'
-        ? actionConfig.readiness
-        : {};
-    const messages = readiness.messages && typeof readiness.messages === 'object'
-        ? readiness.messages
-        : {};
-    const selection = viewState.currentState?.selection || {};
-    const bioState = actionConfig.isBioacoustics
-        ? {
-            ...(viewState.currentState?.bioacoustics || {}),
-            ...getBioacousticsOptions(),
-        }
-        : {};
-
-    if (readiness.requiresSelectionReady && !selection.isReady) {
+    const readinessSnapshot = getCanonicalReadinessState();
+    if (readinessSnapshot.pending) {
         return {
             ready: false,
-            message: messages.notReady || 'The current action requires a ready selection.',
+            message: 'Loading canonical backend readiness...',
         };
     }
 
-    if (typeof readiness.requiresBioacousticsStateField === 'string' && readiness.requiresBioacousticsStateField.trim() !== '') {
-        const requiredField = readiness.requiresBioacousticsStateField.trim();
-        if (!bioState[requiredField]) {
-            return {
-                ready: false,
-                message: messages.notReady || 'The current Bioacoustics action is not ready.',
-            };
-        }
-    }
-
-    if (readiness.requiresOnsetTimes && (!Array.isArray(bioState.onsetTimes) || bioState.onsetTimes.length === 0)) {
+    if (!readinessSnapshot.ready) {
         return {
             ready: false,
-            message: messages.missingOnsetTimes || 'The current action requires onset times.',
-        };
-    }
-
-    const workbookPath = typeof bioState.workbookPath === 'string' ? bioState.workbookPath.trim() : '';
-    if (readiness.requiresWorkbookPath && !workbookPath && !(readiness.acceptsAutoDiscover && bioState.autoDiscover)) {
-        return {
-            ready: false,
-            message: messages.missingWorkbookPath || 'The current action requires a workbook path.',
-        };
-    }
-
-    const requiredOutputModes = Array.isArray(readiness.workbookPathRequiredForOutputModes)
-        ? readiness.workbookPathRequiredForOutputModes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
-        : [];
-    if (requiredOutputModes.length > 0) {
-        const outputMode = typeof bioState.outputMode === 'string' && bioState.outputMode.trim() !== ''
-            ? bioState.outputMode.trim().toLowerCase()
-            : (typeof readiness.defaultOutputMode === 'string' && readiness.defaultOutputMode.trim() !== ''
-                ? readiness.defaultOutputMode.trim().toLowerCase()
-                : 'duplicate');
-        if (requiredOutputModes.includes(outputMode) && !workbookPath) {
-            return {
-                ready: false,
-                message: messages.missingWorkbookPathForOutputMode || 'The current output mode requires a workbook path.',
-            };
+            message: readinessSnapshot.message || 'The current action is not ready.',
         }
     }
 
@@ -539,10 +598,11 @@ const renderAll = () => {
 
     const selection = viewState.currentState?.selection || null;
     const readiness = evaluateActionReadiness();
+    const canonicalReadiness = getCanonicalReadinessState();
     elements.selectionStatus.textContent = readiness.ready
         ? (getCurrentActionConfig()?.isBioacoustics
             ? (getCurrentBioState()?.statusMessage || 'Waiting for a Bioacoustics handler snapshot.')
-            : (selection?.statusMessage || 'Waiting for a selection snapshot.'))
+            : (canonicalReadiness.selectionStatusMessage || selection?.statusMessage || 'Waiting for a selection snapshot.'))
         : readiness.message;
     renderBioHandler();
     renderFacts();
@@ -553,16 +613,21 @@ const renderAll = () => {
     renderLogs();
 };
 
-elements.analysisType.addEventListener('change', renderAll);
+elements.analysisType.addEventListener('change', () => {
+    renderAll();
+    scheduleCanonicalReadinessRefresh();
+});
 elements.saveMode.addEventListener('change', renderAll);
 elements.saveLabel.addEventListener('input', renderAll);
 elements.bioWorkbookPath.addEventListener('input', () => {
     persistBioHandlerPreferences();
     renderAll();
+    scheduleCanonicalReadinessRefresh();
 });
 elements.bioOutputMode.addEventListener('change', () => {
     persistBioHandlerPreferences();
     renderAll();
+    scheduleCanonicalReadinessRefresh();
 });
 
 elements.bioWorkbookBrowseBtn.addEventListener('click', async () => {
@@ -663,12 +728,14 @@ const loadActionMetadata = async () => {
     }
 
     renderAll();
+    scheduleCanonicalReadinessRefresh();
 };
 
 if (ipcRenderer) {
     ipcRenderer.on('backend-call-monitor:state', (_event, nextState) => {
         viewState.currentState = nextState || null;
         renderAll();
+        scheduleCanonicalReadinessRefresh();
     });
 
     ipcRenderer.on('backend-call-monitor:logs', (_event, logEntries) => {

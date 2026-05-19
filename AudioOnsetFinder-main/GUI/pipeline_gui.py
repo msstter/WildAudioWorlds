@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMainWindow
 
@@ -10,13 +11,17 @@ try:
 	from local_integration_session import (
 		attach_to_local_integration_session,
 		consume_local_integration_launch_args,
+		get_local_integration_session_state,
 		open_audio_graphs_companion,
+		poll_local_integration_events,
 	)
 except ImportError:
 	from GUI.local_integration_session import (
 		attach_to_local_integration_session,
 		consume_local_integration_launch_args,
+		get_local_integration_session_state,
 		open_audio_graphs_companion,
+		poll_local_integration_events,
 	)
 
 
@@ -163,10 +168,48 @@ class MainWindow(QMainWindow):
 			self.setWindowIcon(QIcon(ICON_PATH))
 		self._preview = PipelinePreviewController(self, self._build_preview_deps())
 		self._runtime = PipelineRuntimeController(self, self._build_runtime_deps())
+		self._local_integration_event_timer = QTimer(self)
+		self._local_integration_event_timer.setInterval(300)
+		self._local_integration_event_timer.timeout.connect(self._poll_local_integration_events)
+		self._local_integration_poll_in_flight = False
 
 		build_main_window_shell(self, self._build_shell_deps())
 		self._apply_window_style()
 		set_description_level(0)
+
+	def _apply_local_integration_audio_manager_state(self, audio_manager_state: dict | None) -> None:
+		panel = getattr(self, "onset_editor_panel", None)
+		if panel is None or not hasattr(panel, "apply_local_integration_audio_manager_state"):
+			return
+		panel.apply_local_integration_audio_manager_state(audio_manager_state)
+
+	def _start_local_integration_event_pump(self) -> None:
+		if not self._local_integration_event_timer.isActive():
+			self._local_integration_event_timer.start()
+
+	def _poll_local_integration_events(self) -> None:
+		if self._local_integration_poll_in_flight:
+			return
+		self._local_integration_poll_in_flight = True
+		try:
+			response = poll_local_integration_events(limit=20)
+		except Exception as error:
+			self._local_integration_event_timer.stop()
+			self.status.showMessage(f"Shared session sync stopped. {error}")
+		else:
+			events_state = response.get("eventsState") or {}
+			if events_state.get("resetRequired"):
+				try:
+					state_response = get_local_integration_session_state()
+				except Exception as error:
+					self.status.showMessage(f"Failed to refresh shared session state. {error}")
+				else:
+					self._apply_local_integration_audio_manager_state(state_response.get("audioManager"))
+				return
+			for event in response.get("events") or []:
+				self._apply_local_integration_audio_manager_state(event.get("audioManager"))
+		finally:
+			self._local_integration_poll_in_flight = False
 
 	def _build_preview_deps(self) -> PipelinePreviewDeps:
 		return PipelinePreviewDeps(
@@ -287,6 +330,9 @@ class MainWindow(QMainWindow):
 		except Exception as error:
 			self.status.showMessage(f"Failed to open 3D Audio Graphs companion. {error}")
 			return
+
+		self._apply_local_integration_audio_manager_state(response.get("audioManager"))
+		self._start_local_integration_event_pump()
 
 		launched_process = response.get("launchedProcess") or {}
 		pid = launched_process.get("pid")
@@ -412,12 +458,13 @@ class MainWindow(QMainWindow):
 def main(argv: list[str] | None = None) -> int:
 	argv_values = list(sys.argv if argv is None else argv)
 	attach_request, qt_argv = consume_local_integration_launch_args(argv_values)
+	attach_response = None
 	if argv is None:
 		sys.argv[:] = qt_argv
 
 	if attach_request:
 		try:
-			attach_to_local_integration_session(attach_request)
+			attach_response = attach_to_local_integration_session(attach_request)
 		except Exception as error:
 			print(f"Warning: failed to attach AudioOnsetFinder to the shared WildAudioWorlds session. {error}", file=sys.stderr)
 
@@ -428,6 +475,9 @@ def main(argv: list[str] | None = None) -> int:
 		app.setWindowIcon(QIcon(ICON_PATH))
 	window = MainWindow()
 	window.show()
+	if attach_response:
+		window._apply_local_integration_audio_manager_state(attach_response.get("audioManager"))
+		window._start_local_integration_event_pump()
 	return app.exec()
 
 

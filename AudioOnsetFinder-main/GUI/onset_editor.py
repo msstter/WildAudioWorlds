@@ -325,6 +325,7 @@ def _noop_local_integration_publish(*_args, **_kwargs):
 try:
     from local_integration_session import (
         clear_audio_onset_selection as _clear_audio_onset_selection_impl,
+        normalize_local_integration_audio_path as _normalize_local_integration_audio_path_impl,
         publish_audio_onset_asset_state as _publish_audio_onset_asset_state_impl,
         publish_audio_onset_playhead as _publish_audio_onset_playhead_impl,
         publish_audio_onset_selection as _publish_audio_onset_selection_impl,
@@ -333,12 +334,14 @@ except Exception:
     try:
         from GUI.local_integration_session import (
             clear_audio_onset_selection as _clear_audio_onset_selection_impl,
+            normalize_local_integration_audio_path as _normalize_local_integration_audio_path_impl,
             publish_audio_onset_asset_state as _publish_audio_onset_asset_state_impl,
             publish_audio_onset_playhead as _publish_audio_onset_playhead_impl,
             publish_audio_onset_selection as _publish_audio_onset_selection_impl,
         )
     except Exception:
         _clear_audio_onset_selection_impl = _noop_local_integration_publish
+        _normalize_local_integration_audio_path_impl = lambda audio_path=None: os.path.abspath(str(audio_path)) if audio_path else ""
         _publish_audio_onset_asset_state_impl = _noop_local_integration_publish
         _publish_audio_onset_playhead_impl = _noop_local_integration_publish
         _publish_audio_onset_selection_impl = _noop_local_integration_publish
@@ -1904,6 +1907,9 @@ class OnsetEditorPanel(QWidget):
         self._saved_inner_sizes: list[int] = []
         self._selected_region: Optional[tuple] = None
         self._loaded_signal_profile: dict | None = None
+        self._pending_local_integration_loaded_audio_path: Optional[str] = None
+        self._pending_local_integration_playhead: float | None = None
+        self._pending_local_integration_selection_window: dict | None = None
 
         # ── Excel/CSV onset source state ──
         self._excel_onset_path: Optional[str] = None  # path to Excel/CSV used for onset loading
@@ -3013,6 +3019,10 @@ class OnsetEditorPanel(QWidget):
         if self._audio_path and os.path.isfile(self._audio_path):
             self._viewer.load_audio(self._audio_path)
             self._refresh_viewer_markers()
+            if self._pending_local_integration_loaded_audio_path == self._audio_path:
+                return
+
+        self._apply_pending_local_integration_transport_state()
 
     def _current_viewer_playhead(self) -> float | None:
         if self._viewer is None or not hasattr(self._viewer, "get_playhead_position"):
@@ -3057,6 +3067,132 @@ class OnsetEditorPanel(QWidget):
             _clear_audio_onset_selection_impl(playhead_sec=self._current_viewer_playhead())
         except Exception as exc:
             print(f"[local-integration] Failed to clear onset-editor selection: {exc}", file=sys.stderr)
+
+    def _apply_selected_region_state(self, start: float, end: float, *, publish: bool = True):
+        self._selected_region = (start, end)
+        if publish:
+            self._publish_local_integration_selection(start, end)
+        if self._viewer is not None and self._loop_sel_btn.isChecked():
+            self._viewer.set_loop_region(start, end)
+        self._detect_region_btn.setEnabled(self._audio_path is not None)
+        self._edit_audio_btn.setEnabled(self._audio_path is not None)
+        self._mfcc_audio_btn.setEnabled(self._audio_path is not None)
+        self._play_sel_btn.setEnabled(True)
+        self._loop_sel_btn.setEnabled(True)
+        self._status_label.setText(
+            f"Region selected: {start:.3f}s – {end:.3f}s  "
+            f"({end - start:.3f}s)"
+        )
+
+    def _apply_local_integration_audio_path(self, audio_path: str | None) -> None:
+        normalized_audio_path = _normalize_local_integration_audio_path_impl(audio_path)
+        if not normalized_audio_path:
+            self._pending_local_integration_loaded_audio_path = None
+            self._audio_path = None
+            self._loaded_file_index = -1
+            self._clear_selection_state(publish=False)
+            self._file_combo.blockSignals(True)
+            self._file_combo.clear()
+            self._file_combo.blockSignals(False)
+            self._folder_edit.setText("")
+            if self._viewer is not None:
+                self._viewer.clear_audio()
+            self._status_label.setText("No audio selected")
+            return
+
+        if not os.path.isfile(normalized_audio_path):
+            return
+
+        current_audio_path = _normalize_local_integration_audio_path_impl(self._audio_path)
+        self._pending_local_integration_loaded_audio_path = normalized_audio_path
+        if current_audio_path == normalized_audio_path and self._viewer is not None and self._viewer.filePath == normalized_audio_path:
+            return
+
+        folder = os.path.dirname(normalized_audio_path)
+        file_name = os.path.basename(normalized_audio_path)
+        files = _list_audio_files(folder) if folder and os.path.isdir(folder) else []
+        target_index = files.index(file_name) if file_name in files else -1
+        if target_index >= 0:
+            self._apply_restored_file_selection_widgets(folder, files, target_index)
+            return
+
+        self._audio_path = normalized_audio_path
+        self._folder_edit.setText(folder)
+        self._file_combo.blockSignals(True)
+        self._file_combo.clear()
+        self._file_combo.addItem(file_name)
+        self._file_combo.setCurrentIndex(0)
+        self._file_combo.blockSignals(False)
+        self._loaded_file_index = 0
+        if self._viewer is not None:
+            self._viewer.load_audio(normalized_audio_path)
+            self._refresh_viewer_markers()
+
+    def _apply_local_integration_playhead(self, playhead_sec: float | None) -> None:
+        if playhead_sec is None:
+            return
+        normalized_playhead = max(0.0, float(playhead_sec))
+        if self._viewer is None or not self._audio_path or self._viewer.filePath != self._audio_path:
+            self._pending_local_integration_playhead = normalized_playhead
+            return
+        current_playhead = self._current_viewer_playhead()
+        if current_playhead is not None and abs(current_playhead - normalized_playhead) < 0.05:
+            self._pending_local_integration_playhead = None
+            return
+        self._pending_local_integration_playhead = None
+        self._viewer.seek(normalized_playhead)
+
+    def _apply_local_integration_selection_window(self, selection_window: dict | None) -> None:
+        if not isinstance(selection_window, dict):
+            selection_window = {}
+        is_ready = bool(selection_window.get("isReady"))
+        time_range = selection_window.get("timeRangeSec")
+        if (
+            not is_ready
+            or not isinstance(time_range, (list, tuple))
+            or len(time_range) < 2
+        ):
+            self._pending_local_integration_selection_window = None
+            self._clear_selection_state(publish=False)
+            return
+
+        start = float(time_range[0])
+        end = float(time_range[1])
+        if end - start < 0.01:
+            self._pending_local_integration_selection_window = None
+            self._clear_selection_state(publish=False)
+            return
+
+        if self._viewer is None or not self._audio_path or self._viewer.filePath != self._audio_path:
+            self._pending_local_integration_selection_window = {
+                "isReady": True,
+                "timeRangeSec": [start, end],
+            }
+            return
+
+        self._pending_local_integration_selection_window = None
+        self._viewer.set_selection_region(start, end, emit_signal=False)
+        self._apply_selected_region_state(start, end, publish=False)
+
+    def _apply_pending_local_integration_transport_state(self) -> None:
+        if self._pending_local_integration_playhead is not None:
+            self._apply_local_integration_playhead(self._pending_local_integration_playhead)
+        if self._pending_local_integration_selection_window is not None:
+            self._apply_local_integration_selection_window(self._pending_local_integration_selection_window)
+
+    def apply_local_integration_audio_manager_state(self, audio_manager_state: dict | None) -> None:
+        if not isinstance(audio_manager_state, dict):
+            return
+
+        asset = audio_manager_state.get("asset") if isinstance(audio_manager_state.get("asset"), dict) else {}
+        transport_state = (
+            audio_manager_state.get("transportState")
+            if isinstance(audio_manager_state.get("transportState"), dict)
+            else {}
+        )
+        self._apply_local_integration_audio_path(asset.get("sourceAudioPath"))
+        self._apply_local_integration_playhead(transport_state.get("playheadSec"))
+        self._apply_local_integration_selection_window(transport_state.get("selectionWindow"))
 
     # ──────────────────────────────────────────────────────────────────────
     # File browser
@@ -4320,14 +4456,24 @@ class OnsetEditorPanel(QWidget):
 
     def _on_viewer_view_clicked(self, time_sec: float):
         """Publish manual seek updates that do not ride playback callbacks."""
+        if self._pending_local_integration_loaded_audio_path:
+            return
         self._publish_local_integration_playhead(time_sec, force=True)
 
     def _on_viewer_audio_loaded(self, audio_path: str):
         """Publish the active asset after the viewer finishes loading it."""
+        normalized_audio_path = _normalize_local_integration_audio_path_impl(audio_path)
+        if self._pending_local_integration_loaded_audio_path == normalized_audio_path:
+            self._pending_local_integration_loaded_audio_path = None
+            self._apply_pending_local_integration_transport_state()
+            return
         self._publish_local_integration_asset_state(audio_path)
+        self._apply_pending_local_integration_transport_state()
 
     def _on_viewer_playback_position_changed(self, time_sec: float):
         """Publish playback-driven transport updates to the shared session."""
+        if self._pending_local_integration_loaded_audio_path:
+            return
         self._publish_local_integration_playhead(time_sec)
 
     def _on_viewer_onset_clicked(self, index: int, time_sec: float):
@@ -4339,19 +4485,7 @@ class OnsetEditorPanel(QWidget):
     def _on_viewer_region_selected(self, start: float, end: float):
         """A region was selected in the viewer — store it for potential
         onset detection."""
-        self._selected_region = (start, end)
-        self._publish_local_integration_selection(start, end)
-        if self._viewer is not None and self._loop_sel_btn.isChecked():
-            self._viewer.set_loop_region(start, end)
-        self._detect_region_btn.setEnabled(self._audio_path is not None)
-        self._edit_audio_btn.setEnabled(self._audio_path is not None)
-        self._mfcc_audio_btn.setEnabled(self._audio_path is not None)
-        self._play_sel_btn.setEnabled(True)
-        self._loop_sel_btn.setEnabled(True)
-        self._status_label.setText(
-            f"Region selected: {start:.3f}s – {end:.3f}s  "
-            f"({end - start:.3f}s)"
-        )
+        self._apply_selected_region_state(start, end)
 
     def _play_selection(self):
         """Play the selected region once from start to end."""
@@ -4401,13 +4535,14 @@ class OnsetEditorPanel(QWidget):
                     f"({end - start:.3f}s)"
                 )
 
-    def _clear_selection_state(self):
+    def _clear_selection_state(self, publish: bool = True):
         """Clear region selection state and disable selection-related buttons."""
         if self._viewer is not None:
             self._viewer.clear_selection_region()
             self._viewer.clear_focus_region_selection(emit_signal=False)
             self._viewer.clear_loop()
-        self._clear_local_integration_selection()
+        if publish:
+            self._clear_local_integration_selection()
         self._selected_region = None
         has_audio = self._audio_path is not None
         self._detect_region_btn.setEnabled(has_audio)

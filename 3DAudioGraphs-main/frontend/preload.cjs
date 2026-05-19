@@ -1,11 +1,13 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 const invokeChannels = new Set([
+    'backend-call:evaluate-readiness',
     'backend-call:get-action-metadata',
     'backend-call:show-open-dialog',
     'recorded-audio:import',
     'backend-call:run',
     'backend-call-monitor:open',
+    'local-integration:get-state',
     'shell:open-companion',
 ]);
 
@@ -23,6 +25,7 @@ const onChannels = new Set([
     'backend-call-monitor:call-started',
     'backend-call-monitor:call-finished',
     'backend-call-monitor:call-failed',
+    'local-integration:event',
 ]);
 
 function absolutePathToFileUrl(filePath = '') {

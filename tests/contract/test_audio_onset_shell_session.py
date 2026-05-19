@@ -25,7 +25,10 @@ from local_integration_session import (  # noqa: E402
     attach_to_local_integration_session,
     clear_audio_onset_selection,
     consume_local_integration_launch_args,
+    get_local_integration_session_state,
+    normalize_local_integration_audio_path,
     open_audio_graphs_companion,
+    poll_local_integration_events,
     publish_audio_onset_asset_state,
     publish_audio_onset_playhead,
     publish_audio_onset_selection,
@@ -327,3 +330,48 @@ def test_audio_onset_shell_publish_helpers_update_audio_manager_state(tmp_path):
     assert manifest["asset"]["sourceAudioPath"] == str(audio_path.resolve())
     assert manifest["transportState"]["playheadSec"] == 4.0
     assert manifest["transportState"]["selectionWindow"]["isReady"] is False
+
+
+def test_audio_onset_shell_can_poll_audio_manager_events(tmp_path):
+    audio_path = tmp_path / "session_asset.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    initial_state = get_local_integration_session_state(
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+    )
+    assert initial_state["ok"] is True
+
+    publish_audio_onset_asset_state(
+        audio_path,
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+    )
+    publish_audio_onset_playhead(
+        2.25,
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+        force=True,
+    )
+
+    poll_response = poll_local_integration_events(
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+        after_event_id=0,
+        limit=20,
+    )
+
+    assert poll_response["ok"] is True
+    event_kinds = [event["kind"] for event in poll_response["events"]]
+    assert "asset/opened" in event_kinds
+    assert "transport/time_changed" in event_kinds
+    assert poll_response["eventsState"]["latestEventId"] >= len(poll_response["events"])
+
+
+def test_normalize_local_integration_audio_path_handles_file_urls(tmp_path):
+    audio_path = tmp_path / "bird song.wav"
+    audio_path.write_text("demo", encoding="utf-8")
+
+    normalized_path = normalize_local_integration_audio_path(audio_path.as_uri())
+
+    assert normalized_path == str(audio_path.resolve())

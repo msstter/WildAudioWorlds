@@ -4,6 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
+const { pathToFileURL } = require('url');
 
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
 const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
@@ -164,15 +165,17 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
             };
         },
         normalizeBackendRequestState(baseState, runOptions = {}) {
-            const requestState = runOptions?.requestState && typeof runOptions.requestState === 'object' && !Array.isArray(runOptions.requestState)
-                ? runOptions.requestState
-                : baseState;
-            const normalizedState = requestState && typeof requestState === 'object' && !Array.isArray(requestState)
-                ? { ...requestState }
+            const normalizedState = baseState && typeof baseState === 'object' && !Array.isArray(baseState)
+                ? { ...baseState }
                 : {};
-            const requestBioState = normalizedState.bioacoustics && typeof normalizedState.bioacoustics === 'object' && !Array.isArray(normalizedState.bioacoustics)
-                ? { ...normalizedState.bioacoustics }
+            const legacyRequestState = runOptions?.requestState && typeof runOptions.requestState === 'object' && !Array.isArray(runOptions.requestState)
+                ? { ...runOptions.requestState }
                 : {};
+            const requestBioState = runOptions?.bioacousticsState && typeof runOptions.bioacousticsState === 'object' && !Array.isArray(runOptions.bioacousticsState)
+                ? { ...runOptions.bioacousticsState }
+                : (legacyRequestState.bioacoustics && typeof legacyRequestState.bioacoustics === 'object' && !Array.isArray(legacyRequestState.bioacoustics)
+                    ? { ...legacyRequestState.bioacoustics }
+                    : {})
             const bioacousticsOptions = runOptions?.bioacousticsOptions && typeof runOptions.bioacousticsOptions === 'object' && !Array.isArray(runOptions.bioacousticsOptions)
                 ? { ...runOptions.bioacousticsOptions }
                 : {};
@@ -583,6 +586,7 @@ const {
     normalizeBackendAnalysisType,
     normalizeBackendRequestState,
     normalizeBackendSaveMode,
+    normalizeBackendSelectionContract,
 } = sessionCommandContracts;
 
 const formatBackendLogForMonitor = typeof sessionFormatBackendLogForMonitor === 'function'
@@ -713,6 +717,9 @@ let localIntegrationSessionCache = null;
 let localIntegrationStateSyncInFlight = false;
 let localIntegrationStateSyncQueued = false;
 let pendingLocalIntegrationStateSnapshot = null;
+let localIntegrationEventPollInFlight = false;
+let localIntegrationEventPollTimer = null;
+let localIntegrationLastEventId = 0;
 
 const BACKEND_CALL_LOG_LIMIT = 200;
 const LOCAL_INTEGRATION_HOST_SHELL_ID = `shell-graph-${randomUUID()}`;
@@ -823,26 +830,207 @@ function stableSerializeValue(value) {
     return JSON.stringify(value);
 }
 
-function normalizeAudioManagerAssetPayload(asset = null) {
-    const normalizedAsset = asset && typeof asset === 'object' && !Array.isArray(asset)
-        ? asset
-        : {};
-    const assetId = typeof normalizedAsset.assetId === 'string' ? normalizedAsset.assetId.trim() : '';
-    const sourceAudioPath = typeof normalizedAsset.sourceAudioPath === 'string' ? normalizedAsset.sourceAudioPath.trim() : '';
-    if (!assetId && !sourceAudioPath) {
+function toCanonicalAudioUrl(sourceAudioPath = '') {
+    const normalizedSourceAudioPath = typeof sourceAudioPath === 'string' ? sourceAudioPath.trim() : '';
+    if (!normalizedSourceAudioPath) {
+        return '';
+    }
+    if (/^[a-zA-Z][a-zA-Z\d+.-]*:/.test(normalizedSourceAudioPath)) {
+        return normalizedSourceAudioPath;
+    }
+
+    try {
+        return pathToFileURL(normalizedSourceAudioPath).toString();
+    } catch (_error) {
+        return normalizedSourceAudioPath;
+    }
+}
+
+function buildCanonicalBackendAssetPayload(asset = null) {
+    const normalizedAsset = normalizeAudioManagerAssetPayload(asset);
+    if (!normalizedAsset) {
         return null;
     }
 
     return {
+        ...normalizedAsset,
+        id: typeof normalizedAsset.id === 'string' && normalizedAsset.id.trim() !== ''
+            ? normalizedAsset.id.trim()
+            : normalizedAsset.assetId,
+        label: typeof normalizedAsset.label === 'string' && normalizedAsset.label.trim() !== ''
+            ? normalizedAsset.label.trim()
+            : normalizedAsset.assetLabel,
+        audioUrl: typeof normalizedAsset.audioUrl === 'string' && normalizedAsset.audioUrl.trim() !== ''
+            ? normalizedAsset.audioUrl.trim()
+            : normalizedAsset.sourceAudioPath,
+        revisionId: typeof normalizedAsset.revisionId === 'string' && normalizedAsset.revisionId.trim() !== ''
+            ? normalizedAsset.revisionId.trim()
+            : normalizedAsset.activeRevisionId,
+    };
+}
+
+function normalizeAudioManagerStatePayload(audioManager = null) {
+    const normalizedAudioManager = audioManager && typeof audioManager === 'object' && !Array.isArray(audioManager)
+        ? audioManager
+        : {};
+    const transportState = normalizedAudioManager.transportState && typeof normalizedAudioManager.transportState === 'object' && !Array.isArray(normalizedAudioManager.transportState)
+        ? normalizedAudioManager.transportState
+        : {};
+    const stateRevision = Number(normalizedAudioManager.stateRevision);
+
+    return {
+        asset: normalizeAudioManagerAssetPayload(normalizedAudioManager.asset || null),
+        transportState: {
+            playheadSec: normalizeAudioManagerPlayheadSec(transportState.playheadSec),
+            selectionWindow: normalizeAudioManagerSelectionWindow(transportState.selectionWindow || null),
+        },
+        stateRevision: Number.isFinite(stateRevision)
+            ? stateRevision
+            : Number(localIntegrationSessionCache?.stateRevision) || 0,
+    };
+}
+
+function buildCurrentLocalIntegrationAudioManagerState() {
+    return normalizeAudioManagerStatePayload({
+        asset: localIntegrationSessionCache?.asset || null,
+        transportState: localIntegrationSessionCache?.transportState || null,
+        stateRevision: localIntegrationSessionCache?.stateRevision,
+    });
+}
+
+function updateLocalIntegrationSessionCacheFromAudioManager(audioManager = null) {
+    const normalizedAudioManager = normalizeAudioManagerStatePayload(audioManager);
+    localIntegrationSessionCache = {
+        ...(localIntegrationSessionCache || {}),
+        asset: normalizedAudioManager.asset,
+        transportState: normalizedAudioManager.transportState,
+        stateRevision: normalizedAudioManager.stateRevision,
+    };
+    return normalizedAudioManager;
+}
+
+function updateBackendCallStateFromAudioManager(audioManager = null) {
+    const normalizedAudioManager = normalizeAudioManagerStatePayload(audioManager);
+    const currentState = backendCallStateCache && typeof backendCallStateCache === 'object' && !Array.isArray(backendCallStateCache)
+        ? backendCallStateCache
+        : {};
+    const currentAsset = currentState.asset && typeof currentState.asset === 'object' && !Array.isArray(currentState.asset)
+        ? currentState.asset
+        : null;
+
+    const nextAsset = normalizedAudioManager.asset
+        ? {
+            ...(currentAsset || {}),
+            ...buildCanonicalBackendAssetPayload(normalizedAudioManager.asset),
+            label: normalizedAudioManager.asset.assetLabel || currentAsset?.label || path.basename(normalizedAudioManager.asset.sourceAudioPath || ''),
+            audioUrl: toCanonicalAudioUrl(normalizedAudioManager.asset.sourceAudioPath) || currentAsset?.audioUrl || '',
+        }
+        : null;
+
+    backendCallStateCache = {
+        ...currentState,
+        asset: nextAsset,
+        uiContext: {
+            ...(currentState.uiContext && typeof currentState.uiContext === 'object' && !Array.isArray(currentState.uiContext)
+                ? currentState.uiContext
+                : {}),
+            playbackTimeSec: normalizedAudioManager.transportState.playheadSec,
+        },
+        selection: normalizedAudioManager.transportState.selectionWindow,
+    };
+
+    sendToBackendMonitor('backend-call-monitor:state', backendCallStateCache);
+    return normalizedAudioManager;
+}
+
+function buildLocalIntegrationRendererEventPayload(eventPayload = null) {
+    const normalizedEventPayload = eventPayload && typeof eventPayload === 'object' && !Array.isArray(eventPayload)
+        ? cloneJsonCompatibleValue(eventPayload) || {}
+        : {};
+    if (!normalizedEventPayload.audioManager) {
+        normalizedEventPayload.audioManager = buildCurrentLocalIntegrationAudioManagerState();
+    }
+    if (!normalizedEventPayload.eventsState) {
+        normalizedEventPayload.eventsState = {
+            latestEventId: localIntegrationLastEventId,
+        };
+    }
+    return normalizedEventPayload;
+}
+
+function applyLocalIntegrationResponseState(parsed = null) {
+    const responsePayload = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed
+        : {};
+
+    if (responsePayload.session && typeof responsePayload.session === 'object' && !Array.isArray(responsePayload.session)) {
+        localIntegrationSessionCache = {
+            ...(localIntegrationSessionCache || {}),
+            ...responsePayload.session,
+        };
+    }
+
+    if (responsePayload.audioManager && typeof responsePayload.audioManager === 'object' && !Array.isArray(responsePayload.audioManager)) {
+        const normalizedAudioManager = updateLocalIntegrationSessionCacheFromAudioManager(responsePayload.audioManager);
+        updateBackendCallStateFromAudioManager(normalizedAudioManager);
+    }
+
+    const latestEventId = Number(responsePayload?.eventsState?.latestEventId);
+    if (Number.isFinite(latestEventId)) {
+        localIntegrationLastEventId = Math.max(localIntegrationLastEventId, latestEventId);
+    }
+
+    return {
+        ...responsePayload,
+        session: localIntegrationSessionCache,
+        audioManager: buildCurrentLocalIntegrationAudioManagerState(),
+    };
+}
+
+function normalizeAudioManagerAssetPayload(asset = null) {
+    const normalizedAsset = asset && typeof asset === 'object' && !Array.isArray(asset)
+        ? cloneJsonCompatibleValue(asset) || {}
+        : {};
+    const assetId = typeof normalizedAsset.assetId === 'string' && normalizedAsset.assetId.trim() !== ''
+        ? normalizedAsset.assetId.trim()
+        : (typeof normalizedAsset.id === 'string' ? normalizedAsset.id.trim() : '');
+    const sourceAudioPath = typeof normalizedAsset.sourceAudioPath === 'string' && normalizedAsset.sourceAudioPath.trim() !== ''
+        ? normalizedAsset.sourceAudioPath.trim()
+        : (typeof normalizedAsset.audioUrl === 'string' ? normalizedAsset.audioUrl.trim() : '');
+    if (!assetId && !sourceAudioPath) {
+        return null;
+    }
+
+    const assetLabel = typeof normalizedAsset.assetLabel === 'string' && normalizedAsset.assetLabel.trim() !== ''
+        ? normalizedAsset.assetLabel.trim()
+        : (typeof normalizedAsset.label === 'string' ? normalizedAsset.label.trim() : '');
+    const activeRevisionId = typeof normalizedAsset.activeRevisionId === 'string' && normalizedAsset.activeRevisionId.trim() !== ''
+        ? normalizedAsset.activeRevisionId.trim()
+        : (typeof normalizedAsset.revisionId === 'string' && normalizedAsset.revisionId.trim() !== ''
+            ? normalizedAsset.revisionId.trim()
+            : (assetId || sourceAudioPath));
+
+    return {
+        ...normalizedAsset,
         assetId: assetId || sourceAudioPath,
-        assetLabel: typeof normalizedAsset.assetLabel === 'string' ? normalizedAsset.assetLabel.trim() : '',
+        id: typeof normalizedAsset.id === 'string' && normalizedAsset.id.trim() !== ''
+            ? normalizedAsset.id.trim()
+            : (assetId || sourceAudioPath),
+        assetLabel,
+        label: typeof normalizedAsset.label === 'string' && normalizedAsset.label.trim() !== ''
+            ? normalizedAsset.label.trim()
+            : assetLabel,
         sourceAudioPath,
+        audioUrl: typeof normalizedAsset.audioUrl === 'string' && normalizedAsset.audioUrl.trim() !== ''
+            ? normalizedAsset.audioUrl.trim()
+            : sourceAudioPath,
         sourceKind: typeof normalizedAsset.sourceKind === 'string' && normalizedAsset.sourceKind.trim() !== ''
             ? normalizedAsset.sourceKind.trim()
             : (sourceAudioPath ? 'frontend-audio-asset' : 'unknown'),
-        activeRevisionId: typeof normalizedAsset.activeRevisionId === 'string' && normalizedAsset.activeRevisionId.trim() !== ''
-            ? normalizedAsset.activeRevisionId.trim()
-            : (assetId || sourceAudioPath),
+        activeRevisionId,
+        revisionId: typeof normalizedAsset.revisionId === 'string' && normalizedAsset.revisionId.trim() !== ''
+            ? normalizedAsset.revisionId.trim()
+            : activeRevisionId,
     };
 }
 
@@ -901,6 +1089,23 @@ function currentAudioManagerSelectionWindow() {
 
 function currentAudioManagerPlayheadSec() {
     return normalizeAudioManagerPlayheadSec(localIntegrationSessionCache?.transportState?.playheadSec);
+}
+
+function buildCanonicalBackendRequestState(audioManagerState = null) {
+    const normalizedAudioManager = normalizeAudioManagerStatePayload(audioManagerState || {
+        asset: localIntegrationSessionCache?.asset || null,
+        transportState: localIntegrationSessionCache?.transportState || null,
+        stateRevision: localIntegrationSessionCache?.stateRevision,
+    });
+
+    return {
+        asset: buildCanonicalBackendAssetPayload(normalizedAudioManager.asset),
+        selection: normalizeBackendSelectionContract(normalizedAudioManager.transportState.selectionWindow),
+        uiContext: {
+            playbackTimeSec: normalizedAudioManager.transportState.playheadSec,
+        },
+        bioacoustics: {},
+    };
 }
 
 function shouldBootstrapAudioManagerSession(snapshot) {
@@ -1221,15 +1426,7 @@ function buildLocalIntegrationSessionPayload({
             startedAt: LOCAL_INTEGRATION_HOST_STARTED_AT,
             version: app.getVersion(),
         },
-        asset: {
-            assetId: currentAsset.id || '',
-            assetLabel: currentAsset.label || '',
-            sourceAudioPath: typeof currentAsset.audioUrl === 'string' ? currentAsset.audioUrl : '',
-            sourceKind: typeof currentAsset.audioUrl === 'string' && currentAsset.audioUrl.trim() !== ''
-                ? 'frontend-audio-asset'
-                : 'unknown',
-            activeRevisionId: currentAsset.revisionId || currentAsset.id || '',
-        },
+        asset: normalizeAudioManagerAssetPayload(currentAsset) || {},
         transportState: {
             playheadSec: Number(currentUiContext.playbackTimeSec || 0),
             selectionWindow: currentSelection,
@@ -1311,16 +1508,10 @@ function runLocalIntegrationServiceCommand(command, payload, {
         };
 
         const applyParsedResponse = (parsed) => {
-            if (parsed?.session && typeof parsed.session === 'object') {
-                localIntegrationSessionCache = {
-                    ...(localIntegrationSessionCache || {}),
-                    ...parsed.session,
-                };
-            }
-
-            return parsed || {
-                ok: true,
-                session: localIntegrationSessionCache,
+            const responsePayload = applyLocalIntegrationResponseState(parsed);
+            return {
+                ok: responsePayload.ok !== false,
+                ...responsePayload,
             };
         };
 
@@ -1414,26 +1605,18 @@ function runLocalIntegrationServiceCommand(command, payload, {
                 return;
             }
 
-            if (parsed?.session && typeof parsed.session === 'object') {
-                localIntegrationSessionCache = {
-                    ...(localIntegrationSessionCache || {}),
-                    ...parsed.session,
-                };
-            }
+            const responsePayload = applyParsedResponse(parsed);
 
-            if (code !== 0 || parsed?.ok === false) {
-                const error = new Error(parsed?.error || `Local integration service command failed: ${command}`);
-                error.payload = parsed || null;
+            if (code !== 0 || responsePayload?.ok === false) {
+                const error = new Error(responsePayload?.error || `Local integration service command failed: ${command}`);
+                error.payload = responsePayload || null;
                 error.stderr = stderr;
                 error.stdout = stdout;
                 reject(error);
                 return;
             }
 
-            resolve(parsed || {
-                ok: true,
-                session: localIntegrationSessionCache,
-            });
+            resolve(responsePayload);
         });
 
         child.stdin.write(JSON.stringify(normalizedEnvelope));
@@ -1647,6 +1830,9 @@ async function ensureLocalIntegrationSession({
     selection = null,
 } = {}) {
     if (localIntegrationSessionCache?.sessionId) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            scheduleLocalIntegrationEventPoll(0);
+        }
         return localIntegrationSessionCache;
     }
 
@@ -1655,7 +1841,122 @@ async function ensureLocalIntegrationSession({
         asset,
         selection,
     });
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        scheduleLocalIntegrationEventPoll(0);
+    }
     return bootstrapResult?.session || localIntegrationSessionCache;
+}
+
+async function loadCanonicalLocalIntegrationAudioManagerState({
+    launchReason = 'session/get_state',
+} = {}) {
+    await ensureLocalIntegrationSession({ launchReason });
+    if (!localIntegrationSessionCache?.sessionId) {
+        return null;
+    }
+
+    await flushQueuedLocalIntegrationStateSync();
+    const stateResponse = await runLocalIntegrationServiceCommand('session/get_state', {
+        sessionId: localIntegrationSessionCache.sessionId,
+    }, {
+        launchReason,
+    });
+    return stateResponse?.audioManager || buildCurrentLocalIntegrationAudioManagerState();
+}
+
+async function loadCanonicalBackendRequestContext(runOptions = {}, {
+    launchReason = 'backend-call-get-state',
+} = {}) {
+    const analysisType = normalizeBackendAnalysisType(runOptions.analysisType || DEFAULT_BACKEND_ANALYSIS_TYPE);
+    const canonicalAudioManagerState = await loadCanonicalLocalIntegrationAudioManagerState({
+        launchReason,
+    });
+    const requestState = normalizeBackendRequestState(
+        buildCanonicalBackendRequestState(canonicalAudioManagerState),
+        runOptions,
+    );
+
+    return {
+        analysisType,
+        requestState,
+        selectionStatusMessage: typeof requestState?.selection?.statusMessage === 'string'
+            ? requestState.selection.statusMessage.trim()
+            : '',
+    };
+}
+
+function clearLocalIntegrationEventPollTimer() {
+    if (localIntegrationEventPollTimer) {
+        clearTimeout(localIntegrationEventPollTimer);
+        localIntegrationEventPollTimer = null;
+    }
+}
+
+function scheduleLocalIntegrationEventPoll(delayMs = 0) {
+    clearLocalIntegrationEventPollTimer();
+    if (!mainWindow || mainWindow.isDestroyed() || !localIntegrationSessionCache?.sessionId) {
+        return;
+    }
+
+    localIntegrationEventPollTimer = setTimeout(() => {
+        localIntegrationEventPollTimer = null;
+        void pollLocalIntegrationEvents();
+    }, Math.max(0, delayMs));
+}
+
+async function pollLocalIntegrationEvents() {
+    if (
+        localIntegrationEventPollInFlight
+        || !mainWindow
+        || mainWindow.isDestroyed()
+        || !localIntegrationSessionCache?.sessionId
+    ) {
+        return;
+    }
+
+    localIntegrationEventPollInFlight = true;
+    try {
+        const responsePayload = await runLocalIntegrationServiceCommand('events/poll', {
+            sessionId: localIntegrationSessionCache.sessionId,
+            afterEventId: localIntegrationLastEventId,
+            limit: 25,
+            waitTimeoutMs: 1500,
+        }, {
+            launchReason: 'audio-manager-event-poll',
+        });
+        const eventsState = responsePayload?.eventsState && typeof responsePayload.eventsState === 'object' && !Array.isArray(responsePayload.eventsState)
+            ? responsePayload.eventsState
+            : {};
+        const latestEventId = Number(eventsState.latestEventId);
+        if (Number.isFinite(latestEventId)) {
+            localIntegrationLastEventId = Math.max(localIntegrationLastEventId, latestEventId);
+        }
+
+        if (eventsState.resetRequired) {
+            sendToMainWindow('local-integration:event', buildLocalIntegrationRendererEventPayload({
+                kind: 'session/reset',
+                stateRevision: buildCurrentLocalIntegrationAudioManagerState().stateRevision,
+                audioManager: buildCurrentLocalIntegrationAudioManagerState(),
+                eventsState,
+            }));
+        } else {
+            for (const eventPayload of Array.isArray(responsePayload?.events) ? responsePayload.events : []) {
+                const eventId = Number(eventPayload?.eventId);
+                if (Number.isFinite(eventId)) {
+                    localIntegrationLastEventId = Math.max(localIntegrationLastEventId, eventId);
+                }
+                sendToMainWindow('local-integration:event', buildLocalIntegrationRendererEventPayload(eventPayload));
+            }
+        }
+    } catch (error) {
+        console.warn('Failed to poll local integration events:', error);
+        scheduleLocalIntegrationEventPoll(1000);
+        return;
+    } finally {
+        localIntegrationEventPollInFlight = false;
+    }
+
+    scheduleLocalIntegrationEventPoll(0);
 }
 
 function runBackendSelectionAnalysis(requestPayload) {
@@ -1782,6 +2083,47 @@ ipcMain.handle('backend-call:get-action-metadata', async () => {
     };
 });
 
+ipcMain.handle('backend-call:evaluate-readiness', async (_event, runOptions = {}) => {
+    try {
+        const { analysisType, requestState, selectionStatusMessage } = await loadCanonicalBackendRequestContext(runOptions, {
+            launchReason: 'backend-call-evaluate-readiness',
+        });
+        return {
+            ok: true,
+            analysisType,
+            readiness: evaluateBackendActionReadiness(analysisType, {
+                selection: requestState.selection,
+                bioacoustics: requestState.bioacoustics,
+            }),
+            selectionStatusMessage,
+        };
+    } catch (error) {
+        return {
+            ok: false,
+            readiness: {
+                ready: false,
+                code: 'canonical-readiness-unavailable',
+                message: error?.message || 'Failed to evaluate backend readiness from canonical session state.',
+            },
+            selectionStatusMessage: '',
+            error: error?.message || 'Failed to evaluate backend readiness from canonical session state.',
+        };
+    }
+});
+
+ipcMain.handle('local-integration:get-state', async () => {
+    return {
+        ok: true,
+        session: localIntegrationSessionCache,
+        audioManager: localIntegrationSessionCache?.sessionId
+            ? buildCurrentLocalIntegrationAudioManagerState()
+            : null,
+        eventsState: {
+            latestEventId: localIntegrationLastEventId,
+        },
+    };
+});
+
 ipcMain.handle('backend-call:show-open-dialog', async (event, dialogOptions = {}) => {
     const browserWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow || undefined;
     const requestedProperties = Array.isArray(dialogOptions?.properties) && dialogOptions.properties.length > 0
@@ -1877,8 +2219,9 @@ ipcMain.on('backend-call-monitor:ready', (event) => {
 });
 
 ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
-    const analysisType = normalizeBackendAnalysisType(runOptions.analysisType || DEFAULT_BACKEND_ANALYSIS_TYPE);
-    const requestState = normalizeBackendRequestState(backendCallStateCache, runOptions);
+    const { analysisType, requestState } = await loadCanonicalBackendRequestContext(runOptions, {
+        launchReason: 'backend-call-get-state',
+    });
     const requestAsset = requestState.asset;
     const requestSelection = requestState.selection;
     const requestBioacoustics = requestState.bioacoustics;
@@ -2014,7 +2357,12 @@ function createWindow() {
     }
 
     mainWindow.on('closed', () => {
+        clearLocalIntegrationEventPollTimer();
         mainWindow = null;
+    });
+
+    mainWindow.webContents.on('did-finish-load', () => {
+        scheduleLocalIntegrationEventPoll(0);
     });
 }
 

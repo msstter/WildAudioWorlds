@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import time
 from typing import Any
+from urllib.parse import unquote, urlparse
 from uuid import uuid4
 
 
@@ -180,6 +181,18 @@ def _normalize_audio_path(audio_path: str | Path) -> str:
     return str(Path(audio_path).resolve())
 
 
+def normalize_local_integration_audio_path(audio_path: str | Path | None) -> str:
+    normalized_audio_path = _text_or_empty(audio_path)
+    if not normalized_audio_path:
+        return ""
+
+    parsed = urlparse(normalized_audio_path)
+    if parsed.scheme == "file":
+        return _normalize_audio_path(unquote(parsed.path))
+
+    return _normalize_audio_path(normalized_audio_path)
+
+
 def _build_audio_onset_asset_payload(
     audio_path: str | Path,
     *,
@@ -272,6 +285,51 @@ def get_local_integration_session_state(
         bootstrap_root=bootstrap_root,
         python_executable=python_executable,
     )
+
+
+def poll_local_integration_events(
+    *,
+    workspace_root: str | Path | None = None,
+    bootstrap_root: str | Path | None = None,
+    python_executable: str | None = None,
+    after_event_id: int | None = None,
+    limit: int = 25,
+    wait_timeout_ms: int = 0,
+) -> dict[str, Any]:
+    workspace = _resolve_workspace_root(workspace_root)
+    ensure_local_integration_session(
+        workspace_root=workspace,
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+        launch_reason="audio-manager-event-poll",
+    )
+
+    cache = _audio_manager_publish_cache(workspace)
+    normalized_after_event_id = after_event_id
+    if normalized_after_event_id is None:
+        normalized_after_event_id = int(cache.get("lastEventId") or 0)
+
+    response = _run_local_integration_command(
+        {
+            "command": "events/poll",
+            "workspaceRoot": str(workspace),
+            "payload": {
+                "sessionId": _text_or_empty(_resolve_cached_session(workspace).get("sessionId")),
+                "afterEventId": max(0, int(normalized_after_event_id)),
+                "limit": max(1, int(limit)),
+                "waitTimeoutMs": max(0, int(wait_timeout_ms)),
+            },
+        },
+        bootstrap_root=bootstrap_root,
+        python_executable=python_executable,
+    )
+
+    events_state = _mapping_or_empty(response.get("eventsState"))
+    latest_event_id = int(events_state.get("latestEventId") or 0)
+    cache["lastEventId"] = latest_event_id
+    if events_state.get("resetRequired"):
+        cache["lastEventId"] = latest_event_id
+    return response
 
 
 def publish_audio_onset_asset_state(
@@ -784,7 +842,9 @@ __all__ = [
     "consume_local_integration_launch_args",
     "ensure_local_integration_session",
     "get_local_integration_session_state",
+    "normalize_local_integration_audio_path",
     "open_audio_graphs_companion",
+    "poll_local_integration_events",
     "publish_audio_onset_asset_state",
     "publish_audio_onset_playhead",
     "publish_audio_onset_selection",

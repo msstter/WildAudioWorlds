@@ -54,11 +54,9 @@ function mappingOrEmpty(value) {
 }
 
 function normalizeBackendRequestState(baseState, runOptions = {}) {
-    const requestState = runOptions?.requestState && typeof runOptions.requestState === 'object' && !Array.isArray(runOptions.requestState)
-        ? runOptions.requestState
-        : baseState;
-    const normalizedState = mappingOrEmpty(requestState);
-    const requestBioState = mappingOrEmpty(normalizedState.bioacoustics);
+    const normalizedState = mappingOrEmpty(baseState);
+    const legacyRequestState = mappingOrEmpty(runOptions?.requestState);
+    const requestBioState = mappingOrEmpty(runOptions?.bioacousticsState || legacyRequestState.bioacoustics);
     const bioacousticsOptions = mappingOrEmpty(runOptions?.bioacousticsOptions);
     const asset = normalizedState.asset && typeof normalizedState.asset === 'object' && !Array.isArray(normalizedState.asset)
         ? { ...normalizedState.asset }

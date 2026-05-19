@@ -680,6 +680,36 @@ class AudioViewerWidget(QWidget):
         self._loading_label.hide()
         self.audioLoaded.emit(file_path)
 
+    def clear_audio(self):
+        """Clear the loaded audio and reset viewer overlays."""
+        self.stop()
+        self.clear_regions()
+        self.clear_selection_region()
+        self.clear_focus_regions()
+        self.clear_onset_markers()
+        self.clear_comparison_markers()
+        self._y = None
+        self._sr = 22050
+        self._duration = 0.0
+        self._time_offset = 0.0
+        self._file_path = ""
+        self._spec_db = None
+        self._spec_freqs = None
+        self._spec_times = None
+        self._last_spectrogram_error = None
+        self._waveform_curve.setData([], [])
+        self._waveform_plot.setXRange(0.0, 1.0, padding=0)
+        self._waveform_plot.setYRange(-1.0, 1.0, padding=0)
+        self._spec_image.setImage(np.zeros((1, 1), dtype=np.float32), autoLevels=False)
+        from pyqtgraph import QtGui
+        self._spec_image.setTransform(QtGui.QTransform())
+        self._spec_plot.setYRange(0.0, 1.0, padding=0)
+        self._playhead_wave.setValue(0.0)
+        self._playhead_spec.setValue(0.0)
+        self._update_chunk_controls()
+        self._update_time_label(0.0)
+        self._loading_label.hide()
+
     @staticmethod
     def _run_worker(worker: QObject):
         """Execute a worker's run() method (call from thread)."""
@@ -1628,6 +1658,34 @@ class AudioViewerWidget(QWidget):
             self._region_select_item_s = None
         # Also clear any two-click start marker
         self._clear_range_start_marker()
+
+    def set_selection_region(self, start_sec: float, end_sec: float, *, emit_signal: bool = False):
+        """Replace the selection overlay with the provided time range."""
+        lo = min(float(start_sec), float(end_sec))
+        hi = max(float(start_sec), float(end_sec))
+        self.clear_selection_region()
+        if hi - lo < 0.01:
+            if emit_signal:
+                self.regionCleared.emit()
+            return
+
+        self._region_select_item_w = pg.LinearRegionItem(
+            values=[lo, hi],
+            brush=pg.mkBrush(_REGION_SELECT_COLOR),
+            movable=False,
+        )
+        self._region_select_item_s = pg.LinearRegionItem(
+            values=[lo, hi],
+            brush=pg.mkBrush(_REGION_SELECT_COLOR),
+            movable=False,
+        )
+        self._region_select_item_w.setZValue(50)
+        self._region_select_item_s.setZValue(50)
+        self._waveform_plot.addItem(self._region_select_item_w)
+        self._spec_plot.addItem(self._region_select_item_s)
+
+        if emit_signal:
+            self.regionSelected.emit(lo, hi)
 
     def _clear_range_start_marker(self):
         """Remove the temporary start-point marker used in Select Range mode."""

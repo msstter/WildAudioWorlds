@@ -619,6 +619,92 @@ def test_panel_publishes_local_integration_audio_state(qapp, monkeypatch):
     assert published["cleared_playhead"] == 4.5
 
 
+def test_panel_applies_local_integration_audio_manager_state_without_republishing(qapp, monkeypatch, tmp_path):
+    published: dict[str, object] = {}
+
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_asset_state_impl",
+        lambda *_args, **_kwargs: published.setdefault("asset_publish", True),
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_playhead_impl",
+        lambda *_args, **_kwargs: published.setdefault("playhead_publish", True),
+    )
+    monkeypatch.setattr(
+        "onset_editor._publish_audio_onset_selection_impl",
+        lambda *_args, **_kwargs: published.setdefault("selection_publish", True),
+    )
+    monkeypatch.setattr(
+        "onset_editor._clear_audio_onset_selection_impl",
+        lambda **_kwargs: published.setdefault("selection_clear_publish", True),
+    )
+
+    class _ViewerStub:
+        def __init__(self):
+            self.filePath = ""
+            self.seek_calls: list[float] = []
+            self.selection_calls: list[tuple[float, float, bool]] = []
+            self.cleared = False
+            self._playhead = 0.0
+
+        def load_audio(self, audio_path: str):
+            self.filePath = audio_path
+
+        def get_playhead_position(self):
+            return self._playhead
+
+        def seek(self, time_sec: float):
+            self._playhead = time_sec
+            self.seek_calls.append(time_sec)
+
+        def set_selection_region(self, start: float, end: float, *, emit_signal: bool = False):
+            self.selection_calls.append((start, end, emit_signal))
+
+        def clear_selection_region(self):
+            return None
+
+        def clear_focus_region_selection(self, emit_signal=False):
+            return None
+
+        def clear_loop(self):
+            return None
+
+        def clear_audio(self):
+            self.cleared = True
+            self.filePath = ""
+
+    audio_path = tmp_path / "session_asset.wav"
+    audio_path.write_bytes(b"RIFF")
+
+    panel = OnsetEditorPanel()
+    panel._viewer = _ViewerStub()
+    panel._refresh_viewer_markers = lambda: None
+
+    panel.apply_local_integration_audio_manager_state(
+        {
+            "asset": {
+                "sourceAudioPath": audio_path.as_uri(),
+            },
+            "transportState": {
+                "playheadSec": 1.75,
+                "selectionWindow": {
+                    "isReady": True,
+                    "timeRangeSec": [1.0, 2.0],
+                },
+            },
+        }
+    )
+
+    panel._on_viewer_audio_loaded(str(audio_path.resolve()))
+
+    assert panel._audio_path == str(audio_path.resolve())
+    assert panel._viewer.filePath == str(audio_path.resolve())
+    assert panel._viewer.seek_calls == [1.75]
+    assert panel._viewer.selection_calls == [(1.0, 2.0, False)]
+    assert panel._selected_region == (1.0, 2.0)
+    assert published == {}
+
+
 def test_analyze_signals_dialog_shows_recommendations(qapp):
     """AnalyzeSignalsDialog should display recommendation text when provided."""
     recommendation = {

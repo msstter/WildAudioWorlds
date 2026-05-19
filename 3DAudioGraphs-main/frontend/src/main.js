@@ -107,6 +107,10 @@ import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
 
 const desktopBridge = globalThis.desktopBridge ?? null;
 const backendCallMonitorIpc = desktopBridge?.backend ?? null;
+let suppressBackendCallMonitorSyncDepth = 0;
+let awaitingInitialLocalIntegrationState = !!backendCallMonitorIpc;
+let localIntegrationApplyChain = Promise.resolve();
+let localIntegrationHydrationPromise = null;
 
 const BUNDLED_ASSET_MANIFEST_URL = './audio_assets_manifest.json';
 const BUNDLED_ASSET_SOURCE_LABEL = 'Bundled Assets';
@@ -492,6 +496,307 @@ const applyAudioAssetManifestSource = async ({
     }
 
     return result;
+};
+
+const withBackendCallMonitorSyncSuppressed = async (callback) => {
+    suppressBackendCallMonitorSyncDepth += 1;
+    try {
+        return await callback();
+    } finally {
+        suppressBackendCallMonitorSyncDepth = Math.max(0, suppressBackendCallMonitorSyncDepth - 1);
+    }
+};
+
+const normalizeLocalIntegrationSourcePath = (sourceAudioPath = '') => {
+    const normalizedSourceAudioPath = String(sourceAudioPath || '').trim();
+    if (!normalizedSourceAudioPath) return '';
+
+    try {
+        const parsed = new URL(normalizedSourceAudioPath, window.location.href);
+        if (parsed.protocol === 'file:') {
+            let pathname = decodeURIComponent(parsed.pathname || '');
+            if (/^\/[A-Za-z]:\//.test(pathname)) {
+                pathname = pathname.slice(1);
+            }
+            return pathname.replace(/\\/g, '/');
+        }
+    } catch (_error) {
+        // Fall back to the raw path-like value below.
+    }
+
+    return normalizedSourceAudioPath.replace(/\\/g, '/');
+};
+
+const normalizeLocalIntegrationSourceKey = (sourceAudioPath = '') => (
+    normalizeLocalIntegrationSourcePath(sourceAudioPath).toLowerCase()
+);
+
+const resolveCanonicalSelectionTimeRangeSec = (selectionWindow = null) => {
+    const normalizedSelectionWindow = selectionWindow && typeof selectionWindow === 'object' && !Array.isArray(selectionWindow)
+        ? selectionWindow
+        : {};
+    const rawTimeRange = normalizedSelectionWindow.timeRangeSec;
+    if (Array.isArray(rawTimeRange) && rawTimeRange.length >= 2) {
+        const start = Number(rawTimeRange[0]);
+        const end = Number(rawTimeRange[1]);
+        if (Number.isFinite(start) && Number.isFinite(end)) {
+            return { start, end };
+        }
+    }
+    if (rawTimeRange && typeof rawTimeRange === 'object') {
+        const start = Number(rawTimeRange.start);
+        const end = Number(rawTimeRange.end);
+        if (Number.isFinite(start) && Number.isFinite(end)) {
+            return { start, end };
+        }
+    }
+    return null;
+};
+
+const resolveCanonicalSelectionTimePctRange = (selectionWindow = null) => {
+    const normalizedSelectionWindow = selectionWindow && typeof selectionWindow === 'object' && !Array.isArray(selectionWindow)
+        ? selectionWindow
+        : {};
+    const fullClipTimePctRange = normalizedSelectionWindow.fullClipTimePctRange;
+    if (fullClipTimePctRange && typeof fullClipTimePctRange === 'object') {
+        const minPct = Number(fullClipTimePctRange.minPct);
+        const maxPct = Number(fullClipTimePctRange.maxPct);
+        if (Number.isFinite(minPct) && Number.isFinite(maxPct)) {
+            return {
+                minPct: THREE.MathUtils.clamp(Math.min(minPct, maxPct), 0, 100),
+                maxPct: THREE.MathUtils.clamp(Math.max(minPct, maxPct), 0, 100),
+            };
+        }
+    }
+
+    const timeRangeSec = resolveCanonicalSelectionTimeRangeSec(normalizedSelectionWindow);
+    const durationSec = Math.max(
+        Number(audio.duration) || 0,
+        Number(getSelectedAudioAsset()?.analysisClipDurationSec) || 0,
+    );
+    if (!timeRangeSec || durationSec <= 0) {
+        return null;
+    }
+
+    return {
+        minPct: THREE.MathUtils.clamp((Math.min(timeRangeSec.start, timeRangeSec.end) / durationSec) * 100, 0, 100),
+        maxPct: THREE.MathUtils.clamp((Math.max(timeRangeSec.start, timeRangeSec.end) / durationSec) * 100, 0, 100),
+    };
+};
+
+const resolveCanonicalSelectionFrequencyPctRange = (selectionWindow = null) => {
+    const terrainVolumeBoundsPct = selectionWindow?.terrainVolumeBoundsPct;
+    if (terrainVolumeBoundsPct && typeof terrainVolumeBoundsPct === 'object') {
+        const minPct = Number(terrainVolumeBoundsPct.xMinPct);
+        const maxPct = Number(terrainVolumeBoundsPct.xMaxPct);
+        if (Number.isFinite(minPct) && Number.isFinite(maxPct)) {
+            return {
+                minPct: THREE.MathUtils.clamp(Math.min(minPct, maxPct), 0, 100),
+                maxPct: THREE.MathUtils.clamp(Math.max(minPct, maxPct), 0, 100),
+            };
+        }
+    }
+
+    return {
+        minPct: 0,
+        maxPct: 100,
+    };
+};
+
+const resolveCanonicalAudioAssetFromCatalog = (canonicalAsset = null) => {
+    const normalizedCanonicalAsset = canonicalAsset && typeof canonicalAsset === 'object' && !Array.isArray(canonicalAsset)
+        ? canonicalAsset
+        : {};
+    const canonicalAssetId = String(normalizedCanonicalAsset.assetId || '').trim();
+    const canonicalSourceKey = normalizeLocalIntegrationSourceKey(normalizedCanonicalAsset.sourceAudioPath);
+    const candidateAssets = [
+        getSelectedAudioAsset(),
+        ...audioAssetCatalog.getAvailableAudioAssets(),
+    ].filter(Boolean);
+
+    return candidateAssets.find((asset) => {
+        const assetId = String(asset?.id || '').trim();
+        const assetSourceKey = normalizeLocalIntegrationSourceKey(asset?.audioUrl || '');
+        if (canonicalAssetId && assetId === canonicalAssetId) {
+            return true;
+        }
+        return !!canonicalSourceKey && assetSourceKey === canonicalSourceKey;
+    }) || null;
+};
+
+const deriveCanonicalAssetFolderPath = (canonicalAsset = null) => {
+    const sourcePath = normalizeLocalIntegrationSourcePath(canonicalAsset?.sourceAudioPath || '');
+    if (!sourcePath) return '';
+    const lastSeparatorIndex = Math.max(sourcePath.lastIndexOf('/'), sourcePath.lastIndexOf('\\'));
+    return lastSeparatorIndex >= 0 ? sourcePath.slice(0, lastSeparatorIndex) : '';
+};
+
+const reloadCurrentAudioAssetManifest = async (preferredAssetId = getSelectedAudioAssetId('')) => {
+    const currentManifestSource = audioAssetCatalog.getManifestSource?.() || {};
+    return applyAudioAssetManifestSource({
+        manifestUrl: currentManifestSource.manifestUrl || BUNDLED_ASSET_MANIFEST_URL,
+        sourceLabel: currentManifestSource.sourceLabel || assetSourceUiState.assetSourceLabel || BUNDLED_ASSET_SOURCE_LABEL,
+        assetFolderPath: currentCustomAudioAssetFolderPath,
+        persistSelection: false,
+        preferredAssetId,
+    });
+};
+
+const ensureCanonicalAudioAssetAvailable = async (canonicalAsset = null) => {
+    const normalizedCanonicalAsset = canonicalAsset && typeof canonicalAsset === 'object' && !Array.isArray(canonicalAsset)
+        ? canonicalAsset
+        : {};
+    const preferredAssetId = String(normalizedCanonicalAsset.assetId || '').trim() || getSelectedAudioAssetId('');
+    let resolvedAsset = resolveCanonicalAudioAssetFromCatalog(normalizedCanonicalAsset);
+    const currentSelectedAsset = getSelectedAudioAsset();
+    const selectedRevisionId = String(currentSelectedAsset?.revisionId || currentSelectedAsset?.activeRevisionId || currentSelectedAsset?.id || '').trim();
+    const canonicalRevisionId = String(normalizedCanonicalAsset.activeRevisionId || normalizedCanonicalAsset.assetId || '').trim();
+    const needsRevisionRefresh = !!resolvedAsset && !!canonicalRevisionId && selectedRevisionId && canonicalRevisionId !== selectedRevisionId;
+    if (resolvedAsset && !needsRevisionRefresh) {
+        return resolvedAsset;
+    }
+
+    const canonicalAssetFolderPath = deriveCanonicalAssetFolderPath(normalizedCanonicalAsset);
+    const manifestUrl = canonicalAssetFolderPath && desktopBridge?.buildAssetManifestUrl
+        ? desktopBridge.buildAssetManifestUrl(canonicalAssetFolderPath)
+        : null;
+    if (manifestUrl) {
+        const manifestResult = await applyAudioAssetManifestSource({
+            manifestUrl,
+            sourceLabel: `Folder: ${canonicalAssetFolderPath}`,
+            assetFolderPath: canonicalAssetFolderPath,
+            persistSelection: false,
+            preferredAssetId,
+        });
+        if (manifestResult?.ok) {
+            resolvedAsset = resolveCanonicalAudioAssetFromCatalog(normalizedCanonicalAsset);
+        }
+    }
+
+    if (!resolvedAsset || needsRevisionRefresh) {
+        const manifestResult = await reloadCurrentAudioAssetManifest(preferredAssetId);
+        if (manifestResult?.ok) {
+            resolvedAsset = resolveCanonicalAudioAssetFromCatalog(normalizedCanonicalAsset);
+        }
+    }
+
+    return resolvedAsset;
+};
+
+const applyCanonicalLocalIntegrationAsset = async (canonicalAsset = null) => {
+    const normalizedCanonicalAsset = canonicalAsset && typeof canonicalAsset === 'object' && !Array.isArray(canonicalAsset)
+        ? canonicalAsset
+        : {};
+    if (!normalizedCanonicalAsset.assetId && !normalizedCanonicalAsset.sourceAudioPath) {
+        if (getSelectedAudioAsset()) {
+            clearLoadedAudioAssetState();
+        }
+        return;
+    }
+
+    const resolvedAsset = await ensureCanonicalAudioAssetAvailable(normalizedCanonicalAsset);
+    if (!resolvedAsset) {
+        return;
+    }
+
+    const selectedAsset = getSelectedAudioAsset();
+    const selectedRevisionId = String(selectedAsset?.revisionId || selectedAsset?.activeRevisionId || selectedAsset?.id || '').trim();
+    const resolvedRevisionId = String(resolvedAsset?.revisionId || resolvedAsset?.activeRevisionId || resolvedAsset?.id || '').trim();
+    if (selectedAsset?.id === resolvedAsset?.id && selectedRevisionId === resolvedRevisionId) {
+        return;
+    }
+
+    await loadAudioAsset(resolvedAsset, { allowAccumulate: false });
+};
+
+const applyCanonicalLocalIntegrationSelectionWindow = async (selectionWindow = null) => {
+    const normalizedSelectionWindow = selectionWindow && typeof selectionWindow === 'object' && !Array.isArray(selectionWindow)
+        ? selectionWindow
+        : {};
+    if (!normalizedSelectionWindow.isReady) {
+        clearAllTimbreSelections();
+        return;
+    }
+
+    const timePctRange = resolveCanonicalSelectionTimePctRange(normalizedSelectionWindow);
+    if (!timePctRange) {
+        return;
+    }
+    const frequencyPctRange = resolveCanonicalSelectionFrequencyPctRange(normalizedSelectionWindow);
+    applyTerrainOverviewSelection({
+        timeMinPct: timePctRange.minPct,
+        timeMaxPct: timePctRange.maxPct,
+        frequencyMinPct: frequencyPctRange.minPct,
+        frequencyMaxPct: frequencyPctRange.maxPct,
+    });
+};
+
+const applyCanonicalLocalIntegrationPlayhead = (playheadSec) => {
+    const normalizedPlayheadSec = Number(playheadSec);
+    if (!Number.isFinite(normalizedPlayheadSec)) {
+        return;
+    }
+
+    const nextPlayheadSec = Math.max(0, normalizedPlayheadSec);
+    if (Math.abs((audio.currentTime || 0) - nextPlayheadSec) < 0.05) {
+        return;
+    }
+
+    audio.currentTime = nextPlayheadSec;
+    resetTrajectoryPlaybackAnchor(audio.currentTime);
+    syncVisualizerToCurrentTime();
+};
+
+const applyCanonicalLocalIntegrationAudioManagerState = async (audioManagerState = null) => {
+    const normalizedAudioManagerState = audioManagerState && typeof audioManagerState === 'object' && !Array.isArray(audioManagerState)
+        ? audioManagerState
+        : {};
+    const transportState = normalizedAudioManagerState.transportState && typeof normalizedAudioManagerState.transportState === 'object' && !Array.isArray(normalizedAudioManagerState.transportState)
+        ? normalizedAudioManagerState.transportState
+        : {};
+
+    await withBackendCallMonitorSyncSuppressed(async () => {
+        await applyCanonicalLocalIntegrationAsset(normalizedAudioManagerState.asset || null);
+        await applyCanonicalLocalIntegrationSelectionWindow(transportState.selectionWindow || null);
+        applyCanonicalLocalIntegrationPlayhead(transportState.playheadSec);
+    });
+};
+
+const queueCanonicalLocalIntegrationApply = (audioManagerState = null) => {
+    localIntegrationApplyChain = localIntegrationApplyChain
+        .then(() => applyCanonicalLocalIntegrationAudioManagerState(audioManagerState))
+        .catch((error) => {
+            console.warn('Failed to apply canonical local-integration state:', error);
+        });
+    return localIntegrationApplyChain;
+};
+
+const hydrateCanonicalLocalIntegrationState = () => {
+    if (!backendCallMonitorIpc) {
+        awaitingInitialLocalIntegrationState = false;
+        return Promise.resolve();
+    }
+    if (localIntegrationHydrationPromise) {
+        return localIntegrationHydrationPromise;
+    }
+
+    localIntegrationHydrationPromise = backendCallMonitorIpc.invoke('local-integration:get-state')
+        .then((response) => {
+            if (response?.ok === false) {
+                throw new Error(response?.error || 'Failed to hydrate canonical local-integration state.');
+            }
+            return queueCanonicalLocalIntegrationApply(response?.audioManager || null);
+        })
+        .catch((error) => {
+            console.warn('Failed to hydrate canonical local-integration state:', error);
+        })
+        .finally(() => {
+            awaitingInitialLocalIntegrationState = false;
+            localIntegrationHydrationPromise = null;
+            syncBackendCallMonitorState();
+        });
+
+    return localIntegrationHydrationPromise;
 };
 
 assetSourceUiState.chooseAssetFolder = async () => {
@@ -1239,16 +1544,10 @@ const autoImportBioacousticsWorkbookForSelectedAsset = async () => {
     const assetSnapshot = buildBackendCallAssetSnapshot(selectedAsset);
     if (!assetSnapshot?.audioUrl) return null;
 
-    const requestState = {
-        ...buildBackendCallMonitorState(),
-        asset: assetSnapshot,
-    };
-
     try {
         const response = await backendCallMonitorIpc.invoke('backend-call:run', {
             analysisType: BIOACOUSTICS_IMPORT_ACTION,
             saveMode: 'none',
-            requestState,
             bioacousticsOptions: {
                 autoDiscover: true,
                 targetLabel: 'Current Selection',
@@ -1287,20 +1586,15 @@ const exportAnalysisAsBioacousticsWorkbook = async (analysis, {
     const importedWorkbookPath = bioacousticsImportedOnsetState.assetId === getSelectedAudioAssetId('')
         ? bioacousticsImportedOnsetState.workbookPath
         : '';
-    const requestState = {
-        ...buildBackendCallMonitorState(),
-        asset: buildBackendCallAssetSnapshot(),
-        bioacoustics: buildBioacousticsBackendSnapshot(analysis, {
-            targetLabel,
-            targetKind,
-        }),
-    };
 
     const response = await backendCallMonitorIpc.invoke('backend-call:run', {
         analysisType: BIOACOUSTICS_SYNC_ACTION,
         saveMode: 'xlsx',
         saveLabel: buildTimbreExportFileStem(`${targetLabel}-bioacoustics`, 'bioacoustics'),
-        requestState,
+        bioacousticsState: buildBioacousticsBackendSnapshot(analysis, {
+            targetLabel,
+            targetKind,
+        }),
         bioacousticsOptions: {
             workbookPath: importedWorkbookPath,
             outputMode: importedWorkbookPath ? 'duplicate' : 'new-compatible',
@@ -2482,7 +2776,7 @@ const buildBackendCallMonitorState = () => {
 };
 
 const syncBackendCallMonitorState = () => {
-    if (!backendCallMonitorIpc) return;
+    if (!backendCallMonitorIpc || awaitingInitialLocalIntegrationState || suppressBackendCallMonitorSyncDepth > 0) return;
     try {
         backendCallMonitorIpc.send('backend-call-monitor:update-state', buildBackendCallMonitorState());
     } catch (error) {
@@ -2523,6 +2817,9 @@ const openAudioOnsetFinderCompanion = async () => {
 if (backendCallMonitorIpc?.on) {
     backendCallMonitorIpc.on('backend-call:completed', (_event, response) => {
         applyImportedBioacousticsWorkbookResult(response);
+    });
+    backendCallMonitorIpc.on('local-integration:event', (_event, eventPayload) => {
+        void queueCanonicalLocalIntegrationApply(eventPayload?.audioManager || null);
     });
 }
 
@@ -3806,6 +4103,7 @@ if (audio && typeof audio.addEventListener === 'function') {
 window.setInterval(() => {
     syncBackendCallMonitorState();
 }, 1000);
+void hydrateCanonicalLocalIntegrationState();
 syncBackendCallMonitorState();
 
 const formatTransportTimestamp = (timeSec = 0) => {

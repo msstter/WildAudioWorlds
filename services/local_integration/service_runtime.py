@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import traceback
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -44,6 +45,10 @@ SERVICE_SOCKET_ROOT = Path("/tmp") / "wild_audio_worlds"
 SERVICE_STARTUP_TIMEOUT_SEC = 3.0
 SERVICE_PING_TIMEOUT_SEC = 0.2
 SERVICE_COMMAND_TIMEOUT_SEC = 30.0
+SERVICE_EVENT_QUEUE_LIMIT = 256
+SERVICE_EVENT_POLL_DEFAULT_LIMIT = 25
+SERVICE_EVENT_POLL_MAX_LIMIT = 100
+SERVICE_EVENT_POLL_MAX_WAIT_TIMEOUT_SEC = 5.0
 
 
 def _iso_now() -> str:
@@ -54,8 +59,19 @@ def _mapping_or_empty(value: Any) -> dict[str, Any]:
 	return value if isinstance(value, dict) else {}
 
 
+def _list_or_empty(value: Any) -> list[Any]:
+	return deepcopy(value) if isinstance(value, list) else []
+
+
 def _text_or_empty(value: Any) -> str:
 	return str(value or "").strip()
+
+
+def _coerce_int(value: Any, fallback: int = 0) -> int:
+	try:
+		return int(value)
+	except (TypeError, ValueError):
+		return int(fallback)
 
 
 def resolve_service_socket_path(workspace_root: str | Path, session_id: str) -> Path:
@@ -227,6 +243,9 @@ class _ServiceState:
 		)
 		self._jobs: dict[str, _JobRecord] = {}
 		self._lock = threading.Lock()
+		self._events: list[dict[str, Any]] = []
+		self._next_event_id = 1
+		self._event_condition = threading.Condition()
 
 	def descriptor(self) -> dict[str, Any]:
 		return build_persistent_service_descriptor(
@@ -284,6 +303,99 @@ class _ServiceState:
 	def _audio_manager_snapshot(self, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
 		return self.audio_manager.state_snapshot(manifest)
 
+	def _serialize_event_value(self, value: Any) -> str:
+		return json.dumps(value, sort_keys=True, separators=(",", ":"))
+
+	def _append_session_event(self, kind: str, manifest: dict[str, Any], payload: dict[str, Any] | None = None) -> dict[str, Any]:
+		response_fields = self._audio_manager_response_fields(manifest)
+		event = {
+			"eventId": 0,
+			"kind": _text_or_empty(kind),
+			"sessionId": self.session_id,
+			"stateRevision": response_fields["stateRevision"],
+			"emittedAt": _iso_now(),
+			"session": deepcopy(response_fields["session"]),
+			"audioManager": deepcopy(response_fields["audioManager"]),
+			"payload": deepcopy(_mapping_or_empty(payload)),
+		}
+
+		with self._event_condition:
+			event["eventId"] = self._next_event_id
+			self._next_event_id += 1
+			self._events.append(event)
+			if len(self._events) > SERVICE_EVENT_QUEUE_LIMIT:
+				self._events = self._events[-SERVICE_EVENT_QUEUE_LIMIT:]
+			self._event_condition.notify_all()
+
+		return deepcopy(event)
+
+	def _publish_audio_manager_events(
+		self,
+		previous_manifest: dict[str, Any] | None,
+		next_manifest: dict[str, Any] | None,
+	) -> list[dict[str, Any]]:
+		previous_snapshot = self._audio_manager_snapshot(previous_manifest)
+		next_snapshot = self._audio_manager_snapshot(next_manifest)
+
+		previous_asset = _mapping_or_empty(previous_snapshot.get("asset"))
+		next_asset = _mapping_or_empty(next_snapshot.get("asset"))
+		previous_transport = _mapping_or_empty(previous_snapshot.get("transportState"))
+		next_transport = _mapping_or_empty(next_snapshot.get("transportState"))
+		queued_events: list[dict[str, Any]] = []
+
+		if self._serialize_event_value(previous_asset) != self._serialize_event_value(next_asset):
+			asset_event_kind = "asset/updated"
+			if not next_asset:
+				asset_event_kind = "asset/cleared"
+			elif (
+				_text_or_empty(previous_asset.get("assetId")) != _text_or_empty(next_asset.get("assetId"))
+				or _text_or_empty(previous_asset.get("sourceAudioPath")) != _text_or_empty(next_asset.get("sourceAudioPath"))
+			):
+				asset_event_kind = "asset/opened"
+			elif _text_or_empty(previous_asset.get("activeRevisionId")) != _text_or_empty(next_asset.get("activeRevisionId")):
+				asset_event_kind = "asset/revision_changed"
+
+			queued_events.append(self._append_session_event(asset_event_kind, _mapping_or_empty(next_manifest), {
+				"asset": next_asset,
+			}))
+
+		previous_playhead_key = self._serialize_event_value(previous_transport.get("playheadSec"))
+		next_playhead_key = self._serialize_event_value(next_transport.get("playheadSec"))
+		if previous_playhead_key != next_playhead_key:
+			queued_events.append(self._append_session_event("transport/time_changed", _mapping_or_empty(next_manifest), {
+				"playheadSec": next_transport.get("playheadSec"),
+			}))
+
+		previous_selection = _mapping_or_empty(previous_transport.get("selectionWindow"))
+		next_selection = _mapping_or_empty(next_transport.get("selectionWindow"))
+		if self._serialize_event_value(previous_selection) != self._serialize_event_value(next_selection):
+			queued_events.append(self._append_session_event("transport/selection_changed", _mapping_or_empty(next_manifest), {
+				"selectionWindow": next_selection,
+			}))
+
+		return queued_events
+
+	def _poll_events(self, *, after_event_id: int, limit: int, wait_timeout_ms: int) -> tuple[list[dict[str, Any]], bool, int]:
+		deadline = time.monotonic() + max(0.0, min(wait_timeout_ms / 1000.0, SERVICE_EVENT_POLL_MAX_WAIT_TIMEOUT_SEC))
+
+		while True:
+			with self._event_condition:
+				latest_event_id = self._events[-1]["eventId"] if self._events else 0
+				oldest_event_id = self._events[0]["eventId"] if self._events else 0
+				reset_required = after_event_id > 0 and oldest_event_id > 0 and after_event_id < oldest_event_id - 1
+				events = [
+					deepcopy(event)
+					for event in self._events
+					if event["eventId"] > after_event_id
+				][:limit]
+				if events or wait_timeout_ms <= 0:
+					return events, reset_required, latest_event_id
+
+				remaining = deadline - time.monotonic()
+				if remaining <= 0:
+					return [], reset_required, latest_event_id
+				self._event_condition.wait(timeout=remaining)
+
 	def _audio_manager_response_fields(self, manifest: dict[str, Any] | None = None) -> dict[str, Any]:
 		normalized_manifest = _mapping_or_empty(manifest) if manifest is not None else self.audio_manager.current_manifest()
 		if not normalized_manifest:
@@ -312,7 +424,9 @@ class _ServiceState:
 
 	def handle_manifest_sync_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		self._ensure_matching_session(envelope, command="session/sync_manifest")
+		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.sync_from_disk()
+		self._publish_audio_manager_events(previous_manifest, manifest)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
@@ -320,7 +434,9 @@ class _ServiceState:
 
 	def handle_open_asset_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		self._ensure_matching_session(envelope, command="session/open_asset")
+		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.open_asset(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(previous_manifest, manifest)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
@@ -328,7 +444,9 @@ class _ServiceState:
 
 	def handle_clear_asset_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		self._ensure_matching_session(envelope, command="session/clear_asset")
+		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.clear_asset(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(previous_manifest, manifest)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
@@ -336,7 +454,9 @@ class _ServiceState:
 
 	def handle_transport_time_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		self._ensure_matching_session(envelope, command="transport/set_time")
+		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.set_playhead(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(previous_manifest, manifest)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
@@ -344,7 +464,9 @@ class _ServiceState:
 
 	def handle_transport_selection_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		self._ensure_matching_session(envelope, command="transport/set_selection")
+		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.set_selection(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(previous_manifest, manifest)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
@@ -352,10 +474,35 @@ class _ServiceState:
 
 	def handle_asset_revision_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
 		self._ensure_matching_session(envelope, command="asset/set_revision")
+		previous_manifest = self.audio_manager.current_manifest()
 		manifest = self.audio_manager.set_revision(_mapping_or_empty(envelope.get("payload")))
+		self._publish_audio_manager_events(previous_manifest, manifest)
 		return {
 			"ok": True,
 			**self._audio_manager_response_fields(manifest),
+		}
+
+	def handle_event_poll_request(self, envelope: dict[str, Any]) -> dict[str, Any]:
+		self._ensure_matching_session(envelope, command="events/poll")
+		payload = _mapping_or_empty(envelope.get("payload"))
+		after_event_id = max(0, _coerce_int(payload.get("afterEventId"), 0))
+		limit = max(1, min(_coerce_int(payload.get("limit"), SERVICE_EVENT_POLL_DEFAULT_LIMIT), SERVICE_EVENT_POLL_MAX_LIMIT))
+		wait_timeout_ms = max(0, _coerce_int(payload.get("waitTimeoutMs"), 0))
+		events, reset_required, latest_event_id = self._poll_events(
+			after_event_id=after_event_id,
+			limit=limit,
+			wait_timeout_ms=wait_timeout_ms,
+		)
+		return {
+			"ok": True,
+			**self._audio_manager_response_fields(),
+			"events": events,
+			"eventsState": {
+				"afterEventId": after_event_id,
+				"latestEventId": latest_event_id,
+				"resetRequired": reset_required,
+				"queueDepth": len(_list_or_empty(events)),
+			},
 		}
 
 	def handle_manifest_session_command(self, envelope: dict[str, Any]) -> dict[str, Any]:
@@ -686,6 +833,9 @@ class _LocalIntegrationSocketServer(_ThreadingUnixStreamServer):
 
 		if command in {"session/get_state", "data/get_asset_state"}:
 			return self.state.handle_session_state_request(envelope)
+
+		if command == "events/poll":
+			return self.state.handle_event_poll_request(envelope)
 
 		if command == "session/open_asset":
 			return self.state.handle_open_asset_request(envelope)
