@@ -43,7 +43,67 @@ const sharedShellLaunch = fs.existsSync(SHARED_SESSION_SHELL_LAUNCH_MODULE)
             addFlag('--waw-launch-reason', request.launchReason);
             return cliArgs;
         },
+        parseShellLaunchCliArgs(argv = []) {
+            const rawArgv = Array.isArray(argv) ? [...argv] : [];
+            const parsed = {};
+            const remainingArgv = [];
+
+            for (let index = 0; index < rawArgv.length; index += 1) {
+                const token = typeof rawArgv[index] === 'string' ? rawArgv[index].trim() : '';
+                let matchedField = '';
+                let matchedValue = '';
+                let consumedExtra = false;
+
+                const flagEntries = [
+                    ['sessionId', '--waw-session-id'],
+                    ['manifestPath', '--waw-manifest-path'],
+                    ['serviceEndpoint', '--waw-service-endpoint'],
+                    ['originatingShell', '--waw-origin-shell'],
+                    ['launchReason', '--waw-launch-reason'],
+                ];
+
+                for (const [fieldName, flag] of flagEntries) {
+                    if (token === flag) {
+                        matchedField = fieldName;
+                        matchedValue = typeof rawArgv[index + 1] === 'string' ? rawArgv[index + 1].trim() : '';
+                        consumedExtra = index + 1 < rawArgv.length;
+                        break;
+                    }
+
+                    const prefixedFlag = `${flag}=`;
+                    if (token.startsWith(prefixedFlag)) {
+                        matchedField = fieldName;
+                        matchedValue = token.slice(prefixedFlag.length).trim();
+                        break;
+                    }
+                }
+
+                if (matchedField) {
+                    if (matchedValue) {
+                        parsed[matchedField] = matchedValue;
+                    }
+                    if (consumedExtra) {
+                        index += 1;
+                    }
+                    continue;
+                }
+
+                remainingArgv.push(rawArgv[index]);
+            }
+
+            return {
+                launchRequest: parsed.sessionId ? parsed : null,
+                remainingArgv,
+            };
+        },
     };
+const parsedShellLaunchArgs = typeof sharedShellLaunch.parseShellLaunchCliArgs === 'function'
+    ? sharedShellLaunch.parseShellLaunchCliArgs(process.argv)
+    : { launchRequest: null, remainingArgv: process.argv };
+
+if (Array.isArray(parsedShellLaunchArgs.remainingArgv) && parsedShellLaunchArgs.remainingArgv.length > 0) {
+    process.argv = parsedShellLaunchArgs.remainingArgv;
+}
 const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     ? require(SHARED_SESSION_COMMAND_CONTRACTS_MODULE)
     : {
@@ -654,6 +714,7 @@ const BACKEND_CALL_LOG_LIMIT = 200;
 const LOCAL_INTEGRATION_HOST_SHELL_ID = `shell-graph-${randomUUID()}`;
 const LOCAL_INTEGRATION_HOST_STARTED_AT = new Date().toISOString();
 const DEFAULT_COMPANION_SHELL = 'audio-onset-finder';
+const localIntegrationShellLaunchRequest = parsedShellLaunchArgs.launchRequest || null;
 
 // Use dedicated GPU more aggressively.
 app.commandLine.appendSwitch('force_high_performance_gpu');
@@ -1077,6 +1138,71 @@ function buildOpenCompanionRequestPayload({
             requestedByShellId: sessionPayload.hostShell?.shellId || LOCAL_INTEGRATION_HOST_SHELL_ID,
         },
     };
+}
+
+function resolveShellLaunchStateRevision(launchRequest = null) {
+    const manifestPath = typeof launchRequest?.manifestPath === 'string'
+        ? launchRequest.manifestPath.trim()
+        : '';
+    if (!manifestPath || !fs.existsSync(manifestPath)) {
+        return null;
+    }
+
+    try {
+        const loaded = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        const stateRevision = Number(loaded?.stateRevision);
+        return Number.isFinite(stateRevision) ? stateRevision : null;
+    } catch (_error) {
+        return null;
+    }
+}
+
+function buildShellLaunchAttachRequestPayload(launchRequest = null) {
+    const request = launchRequest && typeof launchRequest === 'object' && !Array.isArray(launchRequest)
+        ? launchRequest
+        : {};
+    const sessionId = typeof request.sessionId === 'string' ? request.sessionId.trim() : '';
+    if (!sessionId) {
+        throw new Error('Electron shared-session launch request is missing sessionId.');
+    }
+
+    const payload = {
+        sessionId,
+        shell: {
+            shellId: LOCAL_INTEGRATION_HOST_SHELL_ID,
+            shellType: 'audio-graphs',
+            startedAt: LOCAL_INTEGRATION_HOST_STARTED_AT,
+        },
+        requestedCapabilities: [
+            'transport-read',
+            'transport-write',
+            'asset-read',
+        ],
+    };
+
+    const lastKnownStateRevision = resolveShellLaunchStateRevision(request);
+    if (lastKnownStateRevision !== null) {
+        payload.lastKnownStateRevision = lastKnownStateRevision;
+    }
+
+    return payload;
+}
+
+async function attachShellLaunchSessionIfPresent() {
+    if (!localIntegrationShellLaunchRequest?.sessionId) {
+        return null;
+    }
+
+    try {
+        return await runLocalIntegrationServiceCommand('session/attach', buildShellLaunchAttachRequestPayload(localIntegrationShellLaunchRequest), {
+            launchReason: typeof localIntegrationShellLaunchRequest.launchReason === 'string' && localIntegrationShellLaunchRequest.launchReason.trim() !== ''
+                ? localIntegrationShellLaunchRequest.launchReason.trim()
+                : 'open-companion',
+        });
+    } catch (error) {
+        console.warn(`Warning: failed to attach 3D Audio Graphs to the shared WildAudioWorlds session. ${error?.message || error}`);
+        return null;
+    }
 }
 
 function launchDetachedPythonProcess(command, args, {
@@ -1583,8 +1709,11 @@ function configureMediaPermissions() {
 }
 
 app.on('ready', () => {
-    configureMediaPermissions();
-    createWindow();
+    void (async () => {
+        await attachShellLaunchSessionIfPresent();
+        configureMediaPermissions();
+        createWindow();
+    })();
 });
 
 app.on('window-all-closed', () => {

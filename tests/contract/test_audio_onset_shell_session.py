@@ -17,12 +17,15 @@ if str(GUI_DIR) not in sys.path:
 
 
 from local_integration_session import (  # noqa: E402
+    AUDIO_GRAPHS_SHELL_TYPE,
     AUDIO_ONSET_FINDER_SHELL_TYPE,
     LOCAL_INTEGRATION_HOST_SHELL_ID,
     attach_to_local_integration_session,
     consume_local_integration_launch_args,
+    open_audio_graphs_companion,
 )
 from services.local_integration.bootstrap_service import _handle_command  # noqa: E402
+from wild_audio_worlds.session.shell_launch import parse_shell_launch_cli_args  # noqa: E402
 from wild_audio_worlds.session.session_manifest import load_session_manifest  # noqa: E402
 
 
@@ -88,3 +91,56 @@ def test_audio_onset_shell_attach_uses_real_bootstrap_service(tmp_path):
         "shell-graph-001",
         LOCAL_INTEGRATION_HOST_SHELL_ID,
     }
+
+
+def test_audio_onset_shell_open_companion_bootstraps_session_and_launches_electron(tmp_path, monkeypatch):
+    launched_command: dict[str, object] = {}
+
+    class _FakeProcess:
+        pid = 4242
+
+    def _fake_popen(command, **kwargs):
+        launched_command["command"] = command
+        launched_command["kwargs"] = kwargs
+        return _FakeProcess()
+
+    response = open_audio_graphs_companion(
+        workspace_root=tmp_path,
+        bootstrap_root=ROOT,
+        frontend_root=ROOT / "3DAudioGraphs-main" / "frontend",
+        launch_process_factory=_fake_popen,
+    )
+
+    assert response["ok"] is True
+    assert response["mode"] == "standalone"
+    assert response["launchedShell"]["shellType"] == AUDIO_GRAPHS_SHELL_TYPE
+    assert response["launchedShell"]["requestedByShellId"] == LOCAL_INTEGRATION_HOST_SHELL_ID
+    assert response["launchedProcess"]["pid"] == 4242
+
+    expected_npm_command = "npm.cmd" if sys.platform == "win32" else "npm"
+    launch_command = launched_command["command"]
+    assert launch_command[:4] == [expected_npm_command, "run", "electron:dev", "--"]
+    assert launched_command["kwargs"] == {
+        "cwd": str((ROOT / "3DAudioGraphs-main" / "frontend").resolve()),
+        "stdin": -3,
+        "stdout": -3,
+        "stderr": -3,
+        "start_new_session": True,
+    }
+
+    parsed_request, remaining_argv = parse_shell_launch_cli_args([
+        "electron",
+        "main.cjs",
+        *launch_command[4:],
+    ])
+    assert parsed_request["sessionId"] == response["sessionId"]
+    assert parsed_request["originatingShell"] == AUDIO_ONSET_FINDER_SHELL_TYPE
+    assert parsed_request["launchReason"] == "open-companion"
+    assert remaining_argv == [
+        "electron",
+        "main.cjs",
+    ]
+
+    manifest = load_session_manifest(response["manifestPath"])
+    assert manifest["launchContext"]["requestedCompanion"] == AUDIO_GRAPHS_SHELL_TYPE
+    assert manifest["launchContext"]["requestedByShellId"] == LOCAL_INTEGRATION_HOST_SHELL_ID

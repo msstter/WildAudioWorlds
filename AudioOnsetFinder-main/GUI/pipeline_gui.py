@@ -10,11 +10,13 @@ try:
 	from local_integration_session import (
 		attach_to_local_integration_session,
 		consume_local_integration_launch_args,
+		open_audio_graphs_companion,
 	)
 except ImportError:
 	from GUI.local_integration_session import (
 		attach_to_local_integration_session,
 		consume_local_integration_launch_args,
+		open_audio_graphs_companion,
 	)
 
 
@@ -278,6 +280,21 @@ class MainWindow(QMainWindow):
 
 	def _open_presets_dialog(self) -> None:
 		self._runtime.open_presets_dialog()
+
+	def _open_audio_graphs_companion(self) -> None:
+		try:
+			response = open_audio_graphs_companion()
+		except Exception as error:
+			self.status.showMessage(f"Failed to open 3D Audio Graphs companion. {error}")
+			return
+
+		launched_process = response.get("launchedProcess") or {}
+		pid = launched_process.get("pid")
+		session_id = response.get("sessionId") or "shared session"
+		if pid:
+			self.status.showMessage(f"Opening 3D Audio Graphs companion for {session_id} (pid {pid}).")
+		else:
+			self.status.showMessage(f"Opening 3D Audio Graphs companion for {session_id}.")
 
 	def _on_desc_changed(self, idx: int) -> None:
 		set_description_level(idx)

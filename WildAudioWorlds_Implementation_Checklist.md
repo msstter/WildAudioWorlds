@@ -59,11 +59,13 @@ Last updated: 2026-05-19
 - [x] Validate backend-call monitor rendering against shared failure and log view-models supplied by Electron main
 - [x] Remove remaining recorded-audio failure wording from `frontend/main.cjs` in favor of shared session metadata
 - [x] Validate the first Electron-to-AudioOnsetFinder shared-session shell-edge path with focused Python/CJS tests, Electron syntax checks, and a frontend production build
+- [x] Validate the reverse AudioOnsetFinder-to-Electron shared-session shell-edge path with focused Python contract tests plus Electron CJS smoke and syntax checks
 
 ## Immediate Next
 
-- [ ] Extend the reverse shell edge so AudioOnsetFinder can launch the Electron companion into the same shared session
+- [x] Extend the reverse shell edge so AudioOnsetFinder can launch the Electron companion into the same shared session
 - [ ] Extend the thin bootstrap from explicit attach/open flows into `session/detach`
+- [ ] Add linked-session acceptance coverage for shell-edge launch failures, companion attach failures, and session reuse
 - [ ] Start the first DataManager extraction around mutable asset publication, manifest ownership, and revision-safe writes
 
 ## Newly Completed Step 5 Prep
@@ -92,6 +94,13 @@ Last updated: 2026-05-19
 - [x] Wire AudioOnsetFinder startup through `session/attach` so a launched companion joins the existing shared session before the GUI shows
 - [x] Validate the new shell-edge path with focused Python contract tests, a CJS smoke test, Electron syntax checks, and a frontend production build
 
+## Newly Completed Reverse Shell-Edge Slice
+
+- [x] Add thin AudioOnsetFinder local-integration bootstrap/open-companion helpers so the PyQt shell can own its companion launch path without reintroducing shell-local session vocabulary
+- [x] Add a PyQt main-window companion entry point that requests `shell/open_companion` and launches `3DAudioGraphs-main/frontend` with shared WildAudioWorlds attach args
+- [x] Wire Electron startup through `session/attach` so an AudioOnsetFinder-launched companion joins the shared session before the BrowserWindow shows
+- [x] Validate the reverse shell-edge path with a focused PyQt contract test plus Electron syntax and shared shell-launch smoke checks
+
 ## Notes
 
 - Root repo path: `/Users/mh295/WildAudioWorlds`
@@ -100,5 +109,5 @@ Last updated: 2026-05-19
 - Root Python environment file: `environment.yml`
 - Session attach contract draft now lives in `docs/session_attach_contract.md`
 - Thin local integration bootstrap entrypoint now lives in `services/local_integration/bootstrap_service.py`
-- Current implementation phase: Step 4 is well underway, and Step 5 now includes a real Electron-to-AudioOnsetFinder shell edge on top of the attach/open-companion bootstrap commands and linked-session revision checks
-- The highest-leverage next move is to add the reverse shell edge plus `session/detach`, then push manifest/write ownership toward DataManager instead of adding new shell-local orchestration
+- Current implementation phase: Step 4 is well underway, and Step 5 now includes real shell edges in both directions on top of the attach/open-companion bootstrap commands and linked-session revision checks
+- The highest-leverage next move is to add `session/detach`, then cover launch/attach failure and session-reuse behavior before pushing manifest/write ownership toward DataManager

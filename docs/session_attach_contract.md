@@ -14,14 +14,15 @@ Current implemented scope:
 - `recorded-audio/import`
 - `session/attach`
 - `shell/open_companion`
+- first shell-edge launch from Electron into AudioOnsetFinder
+- reverse shell-edge launch from AudioOnsetFinder into Electron
 
 Current non-implemented scope from this draft:
 
 - explicit `session/detach`
-- linked-session multi-peer attach behavior
-- reverse-direction shell-edge launch from AudioOnsetFinder into Electron
+- linked-session launch-failure, attach-failure, and session-reuse behavior beyond the first happy-path shell edges
 
-That means this document is now partly implemented: the manifest draft, bootstrap path, first open-companion launch-intent flow, first attach flow, and the first Electron-to-AudioOnsetFinder shell edge are live, but detach behavior and reverse-direction shell-edge launch are still the next Step 5 extension.
+That means this document is now partly implemented: the manifest draft, bootstrap path, first open-companion launch-intent flow, first attach flow, and bidirectional first shell edges are live, but detach behavior and failure/reuse handling are still the next Step 5 extension.
 
 ## Purpose
 

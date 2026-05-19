@@ -3,6 +3,7 @@ const { spawn } = require('child_process');
 const rendererUrl = 'http://127.0.0.1:5173';
 const rendererStartupTimeoutMs = 30000;
 const rendererPollIntervalMs = 250;
+const electronLaunchArgs = process.argv.slice(2);
 
 const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const electronCommand = process.platform === 'win32' ? 'electron.cmd' : 'electron';
@@ -116,7 +117,7 @@ async function main() {
         return;
     }
 
-    electronProcess = spawnProcess(electronCommand, ['.'], {
+    electronProcess = spawnProcess(electronCommand, ['.', ...electronLaunchArgs], {
         env: {
             ...process.env,
             ELECTRON_RENDERER_URL: rendererUrl,

@@ -113,6 +113,18 @@ def build_main_window_shell(window, deps: MainWindowShellDeps) -> None:
     top_bar.addWidget(window.preview_btn)
     top_bar.addSpacing(8)
 
+    window.audio_graphs_btn = QPushButton("  3D Graphs  ")
+    window.audio_graphs_btn.setFont(QFont("", 12, QFont.Weight.Bold))
+    window.audio_graphs_btn.setMinimumHeight(34)
+    window.audio_graphs_btn.setStyleSheet(
+        f"QPushButton {{ background-color: {deps.bg_widget}; color: {deps.text_dim}; border-radius: 7px; "
+        f"padding: 5px 16px; border: 1px solid {deps.border}; font-size: 13px; }} "
+        f"QPushButton:hover {{ background-color: {deps.bg_input}; color: {deps.text}; border-color: {deps.accent}; }} "
+    )
+    window.audio_graphs_btn.clicked.connect(window._open_audio_graphs_companion)
+    top_bar.addWidget(window.audio_graphs_btn)
+    top_bar.addSpacing(8)
+
     window.presets_btn = QPushButton("  Presets  ")
     window.presets_btn.setFont(QFont("", 12, QFont.Weight.Bold))
     window.presets_btn.setMinimumHeight(34)
