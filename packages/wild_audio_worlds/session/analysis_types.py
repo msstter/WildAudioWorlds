@@ -13,12 +13,31 @@ class BackendActionUiConfig(TypedDict, total=False):
     showBioOutputMode: bool
 
 
+class BackendActionReadinessMessages(TypedDict, total=False):
+    notReady: str
+    missingWorkbookPath: str
+    missingOnsetTimes: str
+    missingWorkbookPathForOutputMode: str
+
+
+class BackendActionReadinessConfig(TypedDict, total=False):
+    requiresSelectionReady: bool
+    requiresBioacousticsStateField: str
+    requiresWorkbookPath: bool
+    acceptsAutoDiscover: bool
+    requiresOnsetTimes: bool
+    defaultOutputMode: str
+    workbookPathRequiredForOutputModes: list[str]
+    messages: BackendActionReadinessMessages
+
+
 class BackendAnalysisTypeConfig(TypedDict, total=False):
     group: str
     runner: str
     operation: str
     defaultSaveMode: str
     allowedSaveModes: list[str]
+    readiness: BackendActionReadinessConfig
     ui: BackendActionUiConfig
 
 

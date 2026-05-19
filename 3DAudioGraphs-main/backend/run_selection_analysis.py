@@ -19,6 +19,7 @@ from wild_audio_worlds.session.analysis_types import (
 from wild_audio_worlds.session.command_contracts import (
     parse_backend_analysis_request_json,
 )
+from wild_audio_worlds.session.result_metadata import enrich_backend_save_result
 from wild_audio_worlds.session.selection_contracts import (
     normalize_selection_amplitude_pct_range,
     normalize_selection_frequency_window,
@@ -375,11 +376,11 @@ def _run_bioacoustics_sync_workbook(payload):
             "outputWorkbookPath": str(output_path.resolve()),
         },
         "workbookSync": sync_result,
-        "saveResult": {
+        "saveResult": enrich_backend_save_result({
             "mode": "xlsx",
             "saved": True,
             "path": _relative_output_path(output_path),
-        },
+        }),
     }
 
 
@@ -711,11 +712,11 @@ def _save_result(payload, save_artifact=None):
     save_options = payload.get("saveOptions") or {}
     save_mode = str(save_options.get("mode") or "json").strip().lower()
     if save_mode == "none":
-        return {
+        return enrich_backend_save_result({
             "mode": "none",
             "saved": False,
             "path": None,
-        }
+        })
 
     export_dir = _project_root() / "data" / "exports" / "backend_calls"
     export_dir.mkdir(parents=True, exist_ok=True)
@@ -737,14 +738,14 @@ def _save_result(payload, save_artifact=None):
         _write_wav_pcm16(export_path, audio_data, save_artifact.get("sampleRate"))
         sample_rate = max(1, _coerce_int(save_artifact.get("sampleRate"), DEFAULT_SAMPLE_RATE))
         sample_count = int(np.asarray(audio_data, dtype=np.float32).size)
-        return {
+        return enrich_backend_save_result({
             "mode": "wav",
             "saved": True,
             "path": str(export_path.relative_to(_project_root())),
             "sampleRate": sample_rate,
             "sampleCount": sample_count,
             "durationSec": float(sample_count / sample_rate) if sample_rate else 0.0,
-        }
+        })
 
     filename = f"{_slugify(label)}_{_slugify(payload.get('analysisType'))}_{request_id}.json"
     export_path = export_dir / filename
@@ -752,11 +753,11 @@ def _save_result(payload, save_artifact=None):
     with export_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, indent=2)
 
-    return {
+    return enrich_backend_save_result({
         "mode": "json",
         "saved": True,
         "path": str(export_path.relative_to(_project_root())),
-    }
+    })
 
 
 def run():

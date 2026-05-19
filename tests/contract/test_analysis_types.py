@@ -51,3 +51,19 @@ def test_analysis_type_helpers_use_shared_default_and_configs():
     assert config["allowedSaveModes"] == ["wav"]
     assert config["ui"]["label"] == "Export Time Slice Audio"
     assert config["ui"]["showBioOutputMode"] is False
+    assert config["readiness"]["requiresSelectionReady"] is True
+
+
+def test_analysis_type_readiness_metadata_captures_bioacoustics_preconditions():
+    import_config = get_backend_analysis_type_config("bioacoustics-import-workbook")
+    sync_config = get_backend_analysis_type_config("bioacoustics-sync-workbook")
+
+    assert import_config is not None
+    assert import_config["readiness"]["requiresBioacousticsStateField"] == "canImport"
+    assert import_config["readiness"]["requiresWorkbookPath"] is True
+    assert import_config["readiness"]["acceptsAutoDiscover"] is True
+
+    assert sync_config is not None
+    assert sync_config["readiness"]["requiresBioacousticsStateField"] == "canSync"
+    assert sync_config["readiness"]["requiresOnsetTimes"] is True
+    assert sync_config["readiness"]["workbookPathRequiredForOutputModes"] == ["duplicate", "overwrite"]

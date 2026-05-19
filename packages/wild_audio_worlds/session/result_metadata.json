@@ -1,0 +1,24 @@
+{
+  "saveModes": {
+    "json": {
+      "label": "Save JSON to data/exports/backend_calls",
+      "artifactType": "json-report",
+      "artifactLabel": "JSON Report"
+    },
+    "wav": {
+      "label": "Save WAV to data/exports/backend_calls",
+      "artifactType": "wav-audio",
+      "artifactLabel": "WAV Audio"
+    },
+    "xlsx": {
+      "label": "Write Workbook Output (.xlsx)",
+      "artifactType": "workbook-output",
+      "artifactLabel": "Workbook Output"
+    },
+    "none": {
+      "label": "Do Not Save a File",
+      "artifactType": "none",
+      "artifactLabel": "No File"
+    }
+  }
+}

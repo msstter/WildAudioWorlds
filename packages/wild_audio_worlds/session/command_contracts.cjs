@@ -1,5 +1,6 @@
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
+    evaluateBackendActionReadiness,
     getBackendActionMetadataMap,
     normalizeBackendAnalysisType,
     normalizeBackendSaveMode,
@@ -8,6 +9,10 @@ const {
     normalizeBackendSelectionContract,
     normalizeReadySelectionForRequest,
 } = require('./selection_contracts.cjs');
+const {
+    enrichBackendSaveResult,
+    getBackendSaveModeMetadataMap,
+} = require('./result_metadata.cjs');
 
 const DEFAULT_BACKEND_SAVE_MODE = 'json';
 
@@ -92,7 +97,10 @@ module.exports = {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
     DEFAULT_BACKEND_SAVE_MODE,
     buildBackendAnalysisRequest,
+    enrichBackendSaveResult,
+    evaluateBackendActionReadiness,
     getBackendActionMetadataMap,
+    getBackendSaveModeMetadataMap,
     normalizeBackendAnalysisRequest,
     normalizeBackendAnalysisType,
     normalizeBackendRequestState,

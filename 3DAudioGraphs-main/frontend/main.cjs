@@ -152,6 +152,119 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                 },
             });
         },
+        evaluateBackendActionReadiness(analysisType, { selection = null, bioacoustics = null } = {}) {
+            const actionMetadata = this.getBackendActionMetadataMap?.()[this.normalizeBackendAnalysisType(analysisType)] || null;
+            const readiness = actionMetadata?.readiness || {};
+            const messages = readiness?.messages || {};
+            const selectionState = selection && typeof selection === 'object' && !Array.isArray(selection) ? selection : {};
+            const bioState = bioacoustics && typeof bioacoustics === 'object' && !Array.isArray(bioacoustics) ? bioacoustics : {};
+
+            if (readiness.requiresSelectionReady && !selectionState.isReady) {
+                return {
+                    ready: false,
+                    code: 'selection-not-ready',
+                    message: messages.notReady || 'No ready selection is available.',
+                };
+            }
+
+            if (typeof readiness.requiresBioacousticsStateField === 'string' && readiness.requiresBioacousticsStateField.trim() !== '') {
+                const requiredField = readiness.requiresBioacousticsStateField.trim();
+                if (!bioState[requiredField]) {
+                    return {
+                        ready: false,
+                        code: 'bioacoustics-state-not-ready',
+                        message: messages.notReady || 'The current Bioacoustics action is not ready.',
+                    };
+                }
+            }
+
+            if (readiness.requiresOnsetTimes && (!Array.isArray(bioState.onsetTimes) || bioState.onsetTimes.length === 0)) {
+                return {
+                    ready: false,
+                    code: 'missing-onset-times',
+                    message: messages.missingOnsetTimes || 'The current action requires onset times.',
+                };
+            }
+
+            const workbookPath = typeof bioState.workbookPath === 'string' ? bioState.workbookPath.trim() : '';
+            if (readiness.requiresWorkbookPath && !workbookPath && !(readiness.acceptsAutoDiscover && bioState.autoDiscover)) {
+                return {
+                    ready: false,
+                    code: 'missing-workbook-path',
+                    message: messages.missingWorkbookPath || 'The current action requires a workbook path.',
+                };
+            }
+
+            const requiredOutputModes = Array.isArray(readiness.workbookPathRequiredForOutputModes)
+                ? readiness.workbookPathRequiredForOutputModes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+                : [];
+            if (requiredOutputModes.length > 0) {
+                const outputMode = typeof bioState.outputMode === 'string' && bioState.outputMode.trim() !== ''
+                    ? bioState.outputMode.trim().toLowerCase()
+                    : (typeof readiness.defaultOutputMode === 'string' && readiness.defaultOutputMode.trim() !== ''
+                        ? readiness.defaultOutputMode.trim().toLowerCase()
+                        : 'duplicate');
+                if (requiredOutputModes.includes(outputMode) && !workbookPath) {
+                    return {
+                        ready: false,
+                        code: 'missing-workbook-path-for-output-mode',
+                        message: messages.missingWorkbookPathForOutputMode || 'The current output mode requires a workbook path.',
+                    };
+                }
+            }
+
+            return {
+                ready: true,
+                code: 'ready',
+                message: '',
+            };
+        },
+        getBackendSaveModeMetadataMap() {
+            return {
+                json: {
+                    label: 'Save JSON to data/exports/backend_calls',
+                    artifactType: 'json-report',
+                    artifactLabel: 'JSON Report',
+                },
+                wav: {
+                    label: 'Save WAV to data/exports/backend_calls',
+                    artifactType: 'wav-audio',
+                    artifactLabel: 'WAV Audio',
+                },
+                xlsx: {
+                    label: 'Write Workbook Output (.xlsx)',
+                    artifactType: 'workbook-output',
+                    artifactLabel: 'Workbook Output',
+                },
+                none: {
+                    label: 'Do Not Save a File',
+                    artifactType: 'none',
+                    artifactLabel: 'No File',
+                },
+            };
+        },
+        enrichBackendSaveResult(saveResult, { mode } = {}) {
+            const metadataMap = this.getBackendSaveModeMetadataMap();
+            const base = saveResult && typeof saveResult === 'object' && !Array.isArray(saveResult)
+                ? { ...saveResult }
+                : {};
+            const normalizedMode = typeof (mode !== undefined ? mode : base.mode) === 'string' && String(mode !== undefined ? mode : base.mode).trim() !== ''
+                ? String(mode !== undefined ? mode : base.mode).trim().toLowerCase()
+                : 'json';
+            const metadata = metadataMap[normalizedMode] || {
+                label: normalizedMode,
+                artifactType: normalizedMode,
+                artifactLabel: normalizedMode,
+            };
+
+            return {
+                ...base,
+                mode: normalizedMode,
+                modeLabel: metadata.label,
+                artifactType: metadata.artifactType,
+                artifactLabel: metadata.artifactLabel,
+            };
+        },
         getBackendActionMetadataMap() {
             return {
                 'slice-summary': {
@@ -161,6 +274,12 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'json',
                     isBioacoustics: false,
                     showBioOutputMode: false,
+                    readiness: {
+                        requiresSelectionReady: true,
+                        messages: {
+                            notReady: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
+                        },
+                    },
                 },
                 'mfcc-profile': {
                     label: 'MFCC Profile',
@@ -169,6 +288,12 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'json',
                     isBioacoustics: false,
                     showBioOutputMode: false,
+                    readiness: {
+                        requiresSelectionReady: true,
+                        messages: {
+                            notReady: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
+                        },
+                    },
                 },
                 'spectral-shape': {
                     label: 'Spectral Shape',
@@ -177,6 +302,12 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'json',
                     isBioacoustics: false,
                     showBioOutputMode: false,
+                    readiness: {
+                        requiresSelectionReady: true,
+                        messages: {
+                            notReady: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
+                        },
+                    },
                 },
                 'export-time-slice-audio': {
                     label: 'Export Time Slice Audio',
@@ -185,6 +316,12 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'wav',
                     isBioacoustics: false,
                     showBioOutputMode: false,
+                    readiness: {
+                        requiresSelectionReady: true,
+                        messages: {
+                            notReady: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
+                        },
+                    },
                 },
                 'export-spectral-mask-audio': {
                     label: 'Export Sculpted Spectral Mask Audio',
@@ -193,6 +330,12 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'wav',
                     isBioacoustics: false,
                     showBioOutputMode: false,
+                    readiness: {
+                        requiresSelectionReady: true,
+                        messages: {
+                            notReady: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
+                        },
+                    },
                 },
                 'bioacoustics-import-workbook': {
                     label: 'Bioacoustics: Import Workbook Onsets',
@@ -201,6 +344,15 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'none',
                     isBioacoustics: true,
                     showBioOutputMode: false,
+                    readiness: {
+                        requiresBioacousticsStateField: 'canImport',
+                        requiresWorkbookPath: true,
+                        acceptsAutoDiscover: true,
+                        messages: {
+                            notReady: 'Bioacoustics import is waiting for a compatible asset.',
+                            missingWorkbookPath: 'Bioacoustics import requires a workbook path.',
+                        },
+                    },
                 },
                 'bioacoustics-sync-workbook': {
                     label: 'Bioacoustics: Sync Workbook',
@@ -209,6 +361,17 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
                     defaultSaveMode: 'xlsx',
                     isBioacoustics: true,
                     showBioOutputMode: true,
+                    readiness: {
+                        requiresBioacousticsStateField: 'canSync',
+                        requiresOnsetTimes: true,
+                        defaultOutputMode: 'duplicate',
+                        workbookPathRequiredForOutputModes: ['duplicate', 'overwrite'],
+                        messages: {
+                            notReady: 'Bioacoustics workbook sync is waiting for onset times from the active Timbre target.',
+                            missingOnsetTimes: 'Bioacoustics workbook sync requires onset times from the active Timbre target.',
+                            missingWorkbookPathForOutputMode: 'Duplicate or overwrite workbook sync requires a source workbook path.',
+                        },
+                    },
                 },
             };
         },
@@ -216,7 +379,10 @@ const sessionCommandContracts = fs.existsSync(SHARED_SESSION_COMMAND_CONTRACTS_M
 const {
     DEFAULT_BACKEND_ANALYSIS_TYPE,
     buildBackendAnalysisRequest,
+    enrichBackendSaveResult,
+    evaluateBackendActionReadiness,
     getBackendActionMetadataMap,
+    getBackendSaveModeMetadataMap,
     isBioacousticsAnalysisType,
     isBioacousticsImportAnalysisType,
     isBioacousticsSyncAnalysisType,
@@ -629,6 +795,7 @@ ipcMain.handle('backend-call:get-action-metadata', async () => {
         ok: true,
         defaultActionType: DEFAULT_BACKEND_ANALYSIS_TYPE,
         actions: getBackendActionMetadataMap(),
+        saveModes: getBackendSaveModeMetadataMap(),
     };
 });
 
@@ -756,51 +923,18 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         return failure;
     }
 
-    if (!isBioacousticsAnalysisType(analysisType) && !requestSelection?.isReady) {
+    const readiness = evaluateBackendActionReadiness(analysisType, {
+        selection: requestSelection,
+        bioacoustics: requestBioacoustics,
+    });
+    if (!readiness.ready) {
         const failure = {
             ok: false,
-            error: 'No ready SpectroTerrain selection is available. Enable the terrain plane selections so they define a full 3D slice.',
+            error: readiness.message || 'The backend action is not ready to run.',
         };
         appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
-    }
-
-    if (isBioacousticsImportAnalysisType(analysisType)
-        && !requestBioacoustics?.workbookPath
-        && !requestBioacoustics?.autoDiscover) {
-        const failure = {
-            ok: false,
-            error: 'Bioacoustics import requires a workbook path.',
-        };
-        appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
-        sendToMainWindow('backend-call:completed', failure);
-        return failure;
-    }
-
-    if (isBioacousticsSyncAnalysisType(analysisType)) {
-        const onsetTimes = Array.isArray(requestBioacoustics?.onsetTimes) ? requestBioacoustics.onsetTimes : [];
-        const outputMode = typeof requestBioacoustics?.outputMode === 'string' && requestBioacoustics.outputMode.trim() !== ''
-            ? requestBioacoustics.outputMode.trim().toLowerCase()
-            : 'duplicate';
-        if (onsetTimes.length === 0) {
-            const failure = {
-                ok: false,
-                error: 'Bioacoustics workbook sync requires onset times from the active Timbre target.',
-            };
-            appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
-            sendToMainWindow('backend-call:completed', failure);
-            return failure;
-        }
-        if ((outputMode === 'duplicate' || outputMode === 'overwrite') && !requestBioacoustics?.workbookPath) {
-            const failure = {
-                ok: false,
-                error: 'Duplicate or overwrite workbook sync requires a source workbook path.',
-            };
-            appendBackendLog({ level: 'error', scope: 'bridge', message: failure.error });
-            sendToMainWindow('backend-call:completed', failure);
-            return failure;
-        }
     }
 
     let requestPayload;
@@ -838,19 +972,28 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
 
     try {
         const response = await runBackendSelectionAnalysis(requestPayload);
+        const saveResult = enrichBackendSaveResult(response?.saveResult || {});
+        const completedResponse = {
+            ...response,
+            saveResult,
+        };
         appendBackendLog({
             level: 'info',
             scope: 'bridge',
-            message: `Completed ${requestPayload.analysisType}.`,
+            message: saveResult.saved
+                ? `Completed ${requestPayload.analysisType}. Saved ${saveResult.artifactLabel || 'output'}.`
+                : `Completed ${requestPayload.analysisType}. No file was saved.`,
             details: {
                 requestId: requestPayload.callMeta.requestId,
-                saved: response?.saveResult?.saved || false,
-                savePath: response?.saveResult?.path || null,
+                saved: saveResult.saved || false,
+                saveMode: saveResult.modeLabel || saveResult.mode || null,
+                artifact: saveResult.artifactLabel || null,
+                savePath: saveResult.path || null,
             },
         });
-        sendToBackendMonitor('backend-call-monitor:call-finished', response);
-        sendToMainWindow('backend-call:completed', response);
-        return response;
+        sendToBackendMonitor('backend-call-monitor:call-finished', completedResponse);
+        sendToMainWindow('backend-call:completed', completedResponse);
+        return completedResponse;
     } catch (error) {
         const failure = error?.payload || {
             ok: false,

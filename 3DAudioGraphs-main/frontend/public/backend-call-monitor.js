@@ -1,13 +1,6 @@
 const ipcRenderer = globalThis.desktopBridge?.backend ?? null;
 const BIO_HANDLER_PREFERENCES_KEY = '3daudio_backend_monitor_bio_handler_v1';
 
-const SAVE_MODE_LABELS = {
-    json: 'Save JSON to data/exports/backend_calls',
-    wav: 'Save WAV to data/exports/backend_calls',
-    xlsx: 'Write Workbook Output (.xlsx)',
-    none: 'Do Not Save a File',
-};
-
 const elements = {
     connectionStatus: document.getElementById('connection-status'),
     analysisType: document.getElementById('analysis-type'),
@@ -47,6 +40,7 @@ const elements = {
 const viewState = {
     actionCatalog: {},
     defaultActionType: '',
+    saveModeCatalog: {},
     currentState: null,
     logs: [],
     latestResult: null,
@@ -106,12 +100,109 @@ const getCurrentActionConfig = () => {
     const actionType = getCurrentActionType();
     return actionType ? getActionCatalog()[actionType] || null : null;
 };
+
+const getSaveModeCatalog = () => viewState.saveModeCatalog && typeof viewState.saveModeCatalog === 'object'
+    ? viewState.saveModeCatalog
+    : {};
+
 const getCurrentBioState = () => viewState.currentState?.bioacoustics || null;
 
 const getBioacousticsOptions = () => ({
     workbookPath: elements.bioWorkbookPath.value.trim(),
     outputMode: elements.bioOutputMode.value,
 });
+
+const evaluateActionReadiness = () => {
+    if (!ipcRenderer) {
+        return {
+            ready: false,
+            message: 'Open this page through the desktop app to run backend calls.',
+        };
+    }
+
+    const actionConfig = getCurrentActionConfig();
+    if (!actionConfig) {
+        return {
+            ready: false,
+            message: 'Loading backend action metadata...',
+        };
+    }
+
+    if (viewState.isRunning) {
+        return {
+            ready: false,
+            message: 'Backend call already in progress.',
+        };
+    }
+
+    const readiness = actionConfig.readiness && typeof actionConfig.readiness === 'object'
+        ? actionConfig.readiness
+        : {};
+    const messages = readiness.messages && typeof readiness.messages === 'object'
+        ? readiness.messages
+        : {};
+    const selection = viewState.currentState?.selection || {};
+    const bioState = actionConfig.isBioacoustics
+        ? {
+            ...(viewState.currentState?.bioacoustics || {}),
+            ...getBioacousticsOptions(),
+        }
+        : {};
+
+    if (readiness.requiresSelectionReady && !selection.isReady) {
+        return {
+            ready: false,
+            message: messages.notReady || 'The current action requires a ready selection.',
+        };
+    }
+
+    if (typeof readiness.requiresBioacousticsStateField === 'string' && readiness.requiresBioacousticsStateField.trim() !== '') {
+        const requiredField = readiness.requiresBioacousticsStateField.trim();
+        if (!bioState[requiredField]) {
+            return {
+                ready: false,
+                message: messages.notReady || 'The current Bioacoustics action is not ready.',
+            };
+        }
+    }
+
+    if (readiness.requiresOnsetTimes && (!Array.isArray(bioState.onsetTimes) || bioState.onsetTimes.length === 0)) {
+        return {
+            ready: false,
+            message: messages.missingOnsetTimes || 'The current action requires onset times.',
+        };
+    }
+
+    const workbookPath = typeof bioState.workbookPath === 'string' ? bioState.workbookPath.trim() : '';
+    if (readiness.requiresWorkbookPath && !workbookPath && !(readiness.acceptsAutoDiscover && bioState.autoDiscover)) {
+        return {
+            ready: false,
+            message: messages.missingWorkbookPath || 'The current action requires a workbook path.',
+        };
+    }
+
+    const requiredOutputModes = Array.isArray(readiness.workbookPathRequiredForOutputModes)
+        ? readiness.workbookPathRequiredForOutputModes.map((value) => String(value || '').trim().toLowerCase()).filter(Boolean)
+        : [];
+    if (requiredOutputModes.length > 0) {
+        const outputMode = typeof bioState.outputMode === 'string' && bioState.outputMode.trim() !== ''
+            ? bioState.outputMode.trim().toLowerCase()
+            : (typeof readiness.defaultOutputMode === 'string' && readiness.defaultOutputMode.trim() !== ''
+                ? readiness.defaultOutputMode.trim().toLowerCase()
+                : 'duplicate');
+        if (requiredOutputModes.includes(outputMode) && !workbookPath) {
+            return {
+                ready: false,
+                message: messages.missingWorkbookPathForOutputMode || 'The current output mode requires a workbook path.',
+            };
+        }
+    }
+
+    return {
+        ready: true,
+        message: '',
+    };
+};
 
 const syncActionOptions = () => {
     const actionEntries = getOrderedActionEntries();
@@ -162,7 +253,7 @@ const syncSaveModeOptions = () => {
     for (const saveMode of allowedSaveModes) {
         const option = document.createElement('option');
         option.value = saveMode;
-        option.textContent = SAVE_MODE_LABELS[saveMode] || saveMode;
+        option.textContent = getSaveModeCatalog()[saveMode]?.label || saveMode;
         elements.saveMode.appendChild(option);
     }
 
@@ -210,7 +301,7 @@ const buildRequestPreview = () => ({
     },
     asset: viewState.currentState?.asset || null,
     selection: viewState.currentState?.selection || null,
-    bioacoustics: getCurrentActionConfig().isBioacoustics
+    bioacoustics: getCurrentActionConfig()?.isBioacoustics
         ? {
             ...(viewState.currentState?.bioacoustics || {}),
             ...getBioacousticsOptions(),
@@ -220,33 +311,18 @@ const buildRequestPreview = () => ({
 });
 
 const isActionReady = () => {
-    if (!ipcRenderer || viewState.isRunning) return false;
-
-    const actionConfig = getCurrentActionConfig();
-    if (!actionConfig) return false;
-    if (!actionConfig.isBioacoustics) {
-        return !!viewState.currentState?.selection?.isReady;
-    }
-
-    const bioState = getCurrentBioState();
-    if (elements.analysisType.value === 'bioacoustics-import-workbook') {
-        return !!bioState?.canImport && !!elements.bioWorkbookPath.value.trim();
-    }
-
-    const outputMode = elements.bioOutputMode.value;
-    const needsSourceWorkbook = outputMode === 'duplicate' || outputMode === 'overwrite';
-    return !!bioState?.canSync && (!needsSourceWorkbook || !!elements.bioWorkbookPath.value.trim());
+    return evaluateActionReadiness().ready;
 };
 
 const renderBioHandler = () => {
     const actionConfig = getCurrentActionConfig();
     const bioState = getCurrentBioState();
-    const showBioHandler = !!actionConfig.isBioacoustics;
+    const showBioHandler = !!actionConfig?.isBioacoustics;
 
     elements.bioHandlerSection.style.display = showBioHandler ? 'grid' : 'none';
     if (!showBioHandler) return;
 
-    elements.bioOutputModeField.style.display = actionConfig.showBioOutputMode ? '' : 'none';
+    elements.bioOutputModeField.style.display = actionConfig?.showBioOutputMode ? '' : 'none';
     elements.bioStatus.textContent = bioState?.statusMessage || 'Waiting for Bioacoustics handler state from the main window.';
     elements.bioFactTarget.textContent = `${toText(bioState?.targetLabel, 'Current Selection')} | ${toText(bioState?.targetKind, 'current')}`;
     elements.bioFactOnsets.textContent = `${toText(bioState?.onsetCount, 0)} current onset${Number(bioState?.onsetCount || 0) === 1 ? '' : 's'} | ${toText(bioState?.importedOnsetCount, 0)} imported onset${Number(bioState?.importedOnsetCount || 0) === 1 ? '' : 's'}`;
@@ -327,9 +403,12 @@ const renderAll = () => {
         : 'Electron bridge unavailable. Open this page through the desktop app to run backend calls.';
 
     const selection = viewState.currentState?.selection || null;
-    elements.selectionStatus.textContent = getCurrentActionConfig()?.isBioacoustics
-        ? (getCurrentBioState()?.statusMessage || 'Waiting for a Bioacoustics handler snapshot.')
-        : (selection?.statusMessage || 'Waiting for a selection snapshot.');
+    const readiness = evaluateActionReadiness();
+    elements.selectionStatus.textContent = readiness.ready
+        ? (getCurrentActionConfig()?.isBioacoustics
+            ? (getCurrentBioState()?.statusMessage || 'Waiting for a Bioacoustics handler snapshot.')
+            : (selection?.statusMessage || 'Waiting for a selection snapshot.'))
+        : readiness.message;
     renderBioHandler();
     renderFacts();
     elements.requestPreview.textContent = JSON.stringify(buildRequestPreview(), null, 2);
@@ -395,7 +474,7 @@ elements.runCallBtn.addEventListener('click', async () => {
             analysisType: getCurrentActionType(),
             saveMode: elements.saveMode.value,
             saveLabel: elements.saveLabel.value.trim(),
-            bioacousticsOptions: getCurrentActionConfig().isBioacoustics
+            bioacousticsOptions: getCurrentActionConfig()?.isBioacoustics
                 ? getBioacousticsOptions()
                 : undefined,
         });
@@ -415,6 +494,7 @@ const loadActionMetadata = async () => {
     if (!ipcRenderer) {
         viewState.actionCatalog = {};
         viewState.defaultActionType = '';
+        viewState.saveModeCatalog = {};
         renderAll();
         return;
     }
@@ -427,9 +507,13 @@ const loadActionMetadata = async () => {
         viewState.defaultActionType = typeof response?.defaultActionType === 'string'
             ? response.defaultActionType
             : '';
+        viewState.saveModeCatalog = response?.saveModes && typeof response.saveModes === 'object'
+            ? response.saveModes
+            : {};
     } catch (_error) {
         viewState.actionCatalog = {};
         viewState.defaultActionType = '';
+        viewState.saveModeCatalog = {};
     }
 
     renderAll();
