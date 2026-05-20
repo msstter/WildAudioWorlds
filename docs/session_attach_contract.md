@@ -366,6 +366,10 @@ The next service bootstrap does not need to implement the full final event famil
 - AudioOnsetFinder now publishes onset-editor asset loads, manual seek changes, playback position changes, region selection clear or select updates, and first-edit dirty/clean state transitions through `AudioOnsetFinder-main/GUI/local_integration_session.py` and `AudioOnsetFinder-main/GUI/onset_editor.py`.
 - AudioOnsetFinder save completion now republishes the current asset identity and routes save success or failure through `asset/revision_ready` or `asset/revision_failed`, so the canonical lifecycle reflects the real save boundary rather than only local clean-state toggles.
 - Electron now routes recorded-audio import completion plus current-asset backend-call success or failure through the shared revision lifecycle when the finishing job still matches the active canonical asset.
+- Generic backend-call responses can now also surface `promotedAsset` or `nextAsset`, and Electron will prefer that explicit revision identity when publishing lifecycle-ready or lifecycle-failed updates for same-asset revision promotion.
+- A first non-import manifest-writing producer now also exists as `graph/process_asset`, which runs through the shared bootstrap or persistent-service runner path and returns `promotedAsset` for the published graph revision.
+- Electron main and preload now expose that producer as `graph:process-asset`, resolving the request or current canonical asset into a filesystem path and publishing `asset/revision_ready` from the returned `promotedAsset` when the originating revision is still current.
+- The Electron renderer now also owns a first live caller in the `Mode Audio` control surface: `Regenerate MFCC` plus `Process Current Asset` send the selected canonical asset snapshot through `graph:process-asset`, with the MFCC toggle now persisted as a sticky user preference before applying the promoted revision through the existing local-integration asset-consumption path.
 - Focused Python contract tests now cover `service/bootstrap -> shell/open_companion -> session/attach`, `session/detach`, launch failure, attach failure, and session reuse behavior.
 - Focused Python contract tests now also cover the first AudioManager ownership path for asset, revision, dirty-state, playhead, selection, asset-clear state, and revision failed/ready lifecycle state inside the persistent service.
 - Focused shell-edge validation now also covers the onset-editor callback bridge plus Electron syntax checks for the renderer and main-process shell-publish surfaces.
@@ -388,6 +392,6 @@ This draft is good enough for the next implementation slice if it supports the f
 
 After this draft, the next implementation work should be:
 
-1. Carry explicit next-revision identity through the remaining revision-producing backend jobs and onset-edit pipelines so `asset/revision_ready` can promote new derived revisions instead of only confirming the current active revision.
+1. Expand the focused renderer smoke coverage around `Mode Audio -> Regenerate MFCC / Process Current Asset` into interactive Electron coverage, then teach the remaining real revision-producing backend jobs and onset-edit pipelines to emit manifest-backed `promotedAsset` or explicit next-revision identity through the same lifecycle contract so `asset/revision_ready` can promote new derived revisions instead of only confirming the current active revision.
 2. Expand contract and integration coverage around playhead sync, selection sync, revision switching, and companion attach or detach reuse.
 3. Collapse temporary shell-local caches as service-owned read paths become authoritative.

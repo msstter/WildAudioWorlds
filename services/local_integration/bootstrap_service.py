@@ -74,6 +74,20 @@ def _resolve_recorded_audio_import_runner_path(graph_project_root: Path) -> Path
     return graph_project_root / "backend" / "import_recorded_audio.py"
 
 
+def _resolve_graph_process_asset_runner_path(graph_project_root: Path) -> Path:
+    return graph_project_root / "backend" / "process_graph_asset.py"
+
+
+def _resolve_runner_path(command: str, graph_project_root: Path) -> Path:
+    if command == "backend-call/run":
+        return _resolve_backend_runner_path(graph_project_root)
+    if command == "recorded-audio/import":
+        return _resolve_recorded_audio_import_runner_path(graph_project_root)
+    if command == "graph/process_asset":
+        return _resolve_graph_process_asset_runner_path(graph_project_root)
+    raise ValueError(f"Unsupported compatibility runner command: {command}")
+
+
 def _build_service_descriptor(envelope: dict[str, Any], session_payload: dict[str, Any]) -> dict[str, Any]:
     host_shell = _mapping_or_empty(session_payload.get("hostShell"))
     launch_context = _mapping_or_empty(session_payload.get("launchContext"))
@@ -440,23 +454,10 @@ def _handle_command(envelope: dict[str, Any]) -> dict[str, Any]:
     payload = _mapping_or_empty(envelope.get("payload"))
     graph_project_root = _resolve_graph_project_root(envelope, _resolve_workspace_root(envelope))
 
-    if command == "backend-call/run":
+    if command in {"backend-call/run", "recorded-audio/import", "graph/process_asset"}:
         response = _run_compatibility_runner(
             command,
-            _resolve_backend_runner_path(graph_project_root),
-            payload,
-            cwd=graph_project_root,
-        )
-        return {
-            "ok": True,
-            "session": session_summary,
-            "response": response,
-        }
-
-    if command == "recorded-audio/import":
-        response = _run_compatibility_runner(
-            command,
-            _resolve_recorded_audio_import_runner_path(graph_project_root),
+            _resolve_runner_path(command, graph_project_root),
             payload,
             cwd=graph_project_root,
         )

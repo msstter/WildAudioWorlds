@@ -397,6 +397,36 @@ def test_persistent_service_backend_call_returns_job_metadata(tmp_path):
 	assert response["job"]["status"] == "completed"
 
 
+def test_persistent_service_graph_process_asset_returns_job_metadata(tmp_path):
+	_write_backend_runner(tmp_path / "3DAudioGraphs-main" / "backend" / "process_graph_asset.py")
+	bootstrap_response = _bootstrap_service(tmp_path)
+	session_id = bootstrap_response["session"]["sessionId"]
+	endpoint = bootstrap_response["session"]["service"]["endpoint"]
+
+	response = send_service_command(endpoint, {
+		"command": "graph/process_asset",
+		"workspaceRoot": str(tmp_path),
+		"session": {
+			"sessionId": session_id,
+		},
+		"payload": {
+			"sessionId": session_id,
+			"audioPath": "/tmp/marsh.wav",
+			"assetLabel": "Marsh Dawn",
+		},
+	})
+
+	assert response["ok"] is True
+	assert response["response"]["ok"] is True
+	assert response["response"]["received"] == {
+		"sessionId": session_id,
+		"audioPath": "/tmp/marsh.wav",
+		"assetLabel": "Marsh Dawn",
+	}
+	assert response["job"]["jobId"].startswith("waw-job-")
+	assert response["job"]["status"] == "completed"
+
+
 def test_persistent_service_can_cancel_running_backend_job(tmp_path):
 	_write_backend_runner(
 		tmp_path / "3DAudioGraphs-main" / "backend" / "run_selection_analysis.py",

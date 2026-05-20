@@ -11,6 +11,11 @@ import {
 import { createFpvControls } from './app/fpvControls.js';
 import { createAppRuntimeBindings } from './app/appRuntimeBindings.js';
 import { createAppShell } from './app/appShell.js';
+import {
+    buildProcessCurrentAssetRequest,
+    readStoredProcessCurrentAssetIncludeMfcc,
+    writeStoredProcessCurrentAssetIncludeMfcc,
+} from './app/processCurrentAssetControl.js';
 import { createBaseGuiFolders } from './app/settings/baseGuiFolders.js';
 import {
     createLineNodeGuiFolders,
@@ -191,6 +196,8 @@ const assetSourceUiState = {
     assetSourceLabel: BUNDLED_ASSET_SOURCE_LABEL,
     chooseAssetFolder: async () => {},
     useBundledAssets: async () => {},
+    processCurrentAssetIncludeMfcc: readStoredProcessCurrentAssetIncludeMfcc(),
+    processCurrentAsset: async () => {},
 };
 const liveSourceUiState = {
     liveStatus: 'Inactive',
@@ -199,6 +206,8 @@ const liveSourceUiState = {
 let livePerformanceControls = null;
 let liveStatusController = null;
 let liveActionController = null;
+let processCurrentAssetIncludeMfccController = null;
+let processCurrentAssetController = null;
 let stopLiveSourceSession = async () => false;
 let liveRestoreAsset = null;
 let timbreSelectionController = null;
@@ -279,7 +288,39 @@ const getSelectedAudioFileName = (fallback = '') => {
     const pathSegments = audioUrl.split('/').filter(Boolean);
     return pathSegments[pathSegments.length - 1] || fallback;
 };
+
+const setGuiSmokeAttribute = (target, attributeName, attributeValue) => {
+    if (!target || typeof target.setAttribute !== 'function') return;
+    target.setAttribute(attributeName, attributeValue);
+};
+
+const syncProcessCurrentAssetSmokeState = (selectedAsset = getSelectedAudioAsset()) => {
+    const bodyDataset = document.body?.dataset;
+    if (!bodyDataset) return;
+
+    bodyDataset.wawProcessCurrentAssetIncludeMfcc = String(!!assetSourceUiState.processCurrentAssetIncludeMfcc);
+
+    const normalizedAsset = selectedAsset && typeof selectedAsset === 'object' && !Array.isArray(selectedAsset)
+        ? selectedAsset
+        : null;
+    if (!normalizedAsset) {
+        bodyDataset.wawSelectedAssetReady = 'false';
+        delete bodyDataset.wawSelectedAssetId;
+        delete bodyDataset.wawSelectedRevisionId;
+        delete bodyDataset.wawSelectedAssetHasMfcc;
+        return;
+    }
+
+    bodyDataset.wawSelectedAssetReady = 'true';
+    bodyDataset.wawSelectedAssetId = String(normalizedAsset.id || '').trim();
+    bodyDataset.wawSelectedRevisionId = String(
+        normalizedAsset.revisionId || normalizedAsset.activeRevisionId || normalizedAsset.id || '',
+    ).trim();
+    bodyDataset.wawSelectedAssetHasMfcc = String(!!String(normalizedAsset.mfccCsvUrl || '').trim());
+};
+
 const fModeAudio = createModeAudioFolder({ gui });
+setGuiSmokeAttribute(fModeAudio?.domElement, 'data-waw-folder', 'mode-audio');
 const assetSourceLabelController = fModeAudio.add(assetSourceUiState, 'assetSourceLabel').name('Asset Source');
 assetSourceLabelController.listen?.();
 const assetSourceLabelInput = assetSourceLabelController.domElement?.querySelector?.('input');
@@ -289,6 +330,16 @@ if (assetSourceLabelInput) {
 }
 fModeAudio.add(assetSourceUiState, 'chooseAssetFolder').name('Choose Asset Folder');
 fModeAudio.add(assetSourceUiState, 'useBundledAssets').name('Use Bundled Assets');
+processCurrentAssetIncludeMfccController = fModeAudio.add(assetSourceUiState, 'processCurrentAssetIncludeMfcc').name('Regenerate MFCC');
+setGuiSmokeAttribute(processCurrentAssetIncludeMfccController?.domElement, 'data-waw-control', 'process-current-asset-include-mfcc');
+processCurrentAssetIncludeMfccController.listen?.();
+processCurrentAssetIncludeMfccController.onChange?.((nextValue) => {
+    writeStoredProcessCurrentAssetIncludeMfcc(nextValue);
+    syncProcessCurrentAssetSmokeState();
+});
+processCurrentAssetController = fModeAudio.add(assetSourceUiState, 'processCurrentAsset').name('Process Current Asset');
+setGuiSmokeAttribute(processCurrentAssetController?.domElement, 'data-waw-control', 'process-current-asset');
+syncProcessCurrentAssetSmokeState(null);
 
 const rebuildLiveSourceGuiControllers = () => {
     if (liveStatusController) {
@@ -836,6 +887,10 @@ assetSourceUiState.useBundledAssets = async () => {
     if (!result.ok) {
         console.error('Bundled audio asset manifest could not be loaded.', result.error);
     }
+};
+
+assetSourceUiState.processCurrentAsset = async () => {
+    await processCurrentGraphAsset();
 };
 
 const isTerrainMode = () => settings.visualizationMode === 'SpectroTerrain';
@@ -1446,6 +1501,49 @@ const buildBackendCallAssetSnapshot = (selectedAsset = getSelectedAudioAsset()) 
     analysisClipDurationSec: selectedAsset.analysisClipDurationSec,
     analysisFftNfft: selectedAsset.analysisFftNfft,
     } : null;
+};
+
+const processCurrentGraphAsset = async () => {
+    if (!backendCallMonitorIpc) {
+        window.alert('Graph asset processing is available only inside the Electron app shell.');
+        return null;
+    }
+
+    const selectedAsset = getSelectedAudioAsset();
+    const assetSnapshot = buildBackendCallAssetSnapshot(selectedAsset);
+    const requestPayload = buildProcessCurrentAssetRequest({
+        assetSnapshot,
+        includeMfcc: assetSourceUiState.processCurrentAssetIncludeMfcc,
+        fallbackLabel: getSelectedAudioFileName('Current Asset'),
+    });
+    if (!requestPayload) {
+        window.alert('Load an audio asset before processing the current graph asset.');
+        return null;
+    }
+
+    try {
+        const response = await backendCallMonitorIpc.invoke('graph:process-asset', requestPayload);
+        if (!response?.ok) {
+            window.alert(response?.error || 'Graph asset processing failed.');
+            return null;
+        }
+
+        const promotedAsset = response?.promotedAsset || response?.nextAsset || response?.asset || null;
+        if (promotedAsset) {
+            await applyCanonicalLocalIntegrationAsset(promotedAsset);
+        } else {
+            const manifestResult = await reloadCurrentAudioAssetManifest(assetSnapshot.id || getSelectedAudioAssetId(''));
+            if (!manifestResult?.ok) {
+                console.error('Processed graph asset, but the manifest could not be reloaded.', manifestResult?.error);
+            }
+        }
+
+        return response;
+    } catch (error) {
+        console.error('Failed to process the current graph asset:', error);
+        window.alert(error?.message || 'Graph asset processing failed.');
+        return null;
+    }
 };
 
 const buildBioacousticsBackendSnapshot = (analysis, {
@@ -4264,6 +4362,7 @@ const audioAssetLoader = createAudioAssetLoader({
         clearTerrainOnsetOverlaySelection();
         markTerrainOnsetOverlayDirty();
         terrainSculptOverviewController?.refreshData?.();
+        syncProcessCurrentAssetSmokeState(payload?.asset || getSelectedAudioAsset());
         syncBackendCallMonitorState();
         refreshTerrainOnsetOverlay();
         void autoImportBioacousticsWorkbookForSelectedAsset();
@@ -4287,6 +4386,7 @@ const loadAudioAsset = async (asset, options) => {
 
 function clearLoadedAudioAssetState() {
     selectedAudioAssetState.setSelectedAsset(null);
+    syncProcessCurrentAssetSmokeState(null);
     setSelectedTimbreInstanceIds([]);
     clearAccumulatedViews();
 

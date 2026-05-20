@@ -800,11 +800,7 @@ class _ServiceState:
 		session_summary = build_session_summary(existing_manifest, manifest_path)
 		payload = bootstrap_service._mapping_or_empty(envelope.get("payload"))
 		graph_project_root = bootstrap_service._resolve_graph_project_root(envelope, workspace_root)
-		runner_path = (
-			bootstrap_service._resolve_backend_runner_path(graph_project_root)
-			if command == "backend-call/run"
-			else bootstrap_service._resolve_recorded_audio_import_runner_path(graph_project_root)
-		)
+		runner_path = bootstrap_service._resolve_runner_path(command, graph_project_root)
 
 		job = self._create_job(command, session_summary["sessionId"])
 		supersedes_job_id = _text_or_empty(payload.get("supersedesJobId")) or _text_or_empty(envelope.get("supersedesJobId"))
@@ -922,7 +918,7 @@ class _LocalIntegrationSocketServer(_ThreadingUnixStreamServer):
 		if command == "job/status":
 			return self.state.handle_job_status_request(envelope)
 
-		if command in {"backend-call/run", "recorded-audio/import"}:
+		if command in {"backend-call/run", "recorded-audio/import", "graph/process_asset"}:
 			return self.state.handle_runner_command(envelope)
 
 		from services.local_integration.bootstrap_service import _handle_command

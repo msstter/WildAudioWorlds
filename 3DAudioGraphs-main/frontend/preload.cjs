@@ -5,6 +5,7 @@ const invokeChannels = new Set([
     'backend-call:get-action-metadata',
     'backend-call:show-open-dialog',
     'recorded-audio:import',
+    'graph:process-asset',
     'backend-call:run',
     'backend-call-monitor:open',
     'local-integration:get-state',

@@ -21,7 +21,11 @@ Last updated: 2026-05-19
 - [x] Audit the merged Electron and Qt control surface and add the first always-visible cross-app launchers
 - [x] Add dirty-state, revision-ready, and revision-failure coordination on top of the shared session authority
 - [x] Route onset-editor save completion and first Electron backend completion hooks onto the shared revision lifecycle
-- [ ] Carry explicit next-revision identity through remaining revision-producing completion paths
+- [x] Add backend-call promoted-asset response support and Electron-side next-revision promotion guards
+- [x] Add the first non-import `graph/process_asset` promoted-asset runner command
+- [x] Expose `graph/process_asset` through Electron main and preload IPC with promoted-asset revision-ready publication
+- [x] Add a visible `Mode Audio` renderer action plus sticky `Regenerate MFCC` preference that invoke `graph:process-asset` for the selected canonical asset and apply the promoted revision
+- [ ] Teach remaining revision-producing completion paths and shell callers to emit or consume manifest-backed `promotedAsset` identity
 
 ## Completed Foundations
 
@@ -80,7 +84,7 @@ Last updated: 2026-05-19
 
 ## Immediate Next
 
-- [ ] Carry explicit next-revision identity through remaining revision-producing backend jobs and onset-edit pipelines so `asset/revision_ready` can promote newly-derived revisions instead of only confirming the current active revision
+- [ ] Teach each real revision-producing backend job and onset-edit pipeline to emit manifest-backed `promotedAsset` or explicit next-revision identity through the new lifecycle contract so `asset/revision_ready` can promote newly-derived revisions instead of only confirming the current active revision
 - [ ] Expand contract and integration coverage around canonical event delivery, live-source transitions, revision switching, companion attach or detach reuse, and superseded jobs
 - [ ] Decide which backend-monitor and companion-only actions should be promoted into direct main-shell shortcuts after the merged control-surface audit
 
@@ -191,6 +195,20 @@ Last updated: 2026-05-19
 - [x] Route recorded-audio import completion through `asset/revision_ready` with the returned manifest entry so new imported assets become canonical through the shared lifecycle rather than only through renderer-local load flow
 - [x] Route current-asset backend-call success and failure through lifecycle-ready or failed updates when the finishing job still matches the active canonical asset, so stale job completions do not mutate newer session state
 
+## Newly Completed Revision Identity Contract Slice
+
+- [x] Allow `3DAudioGraphs-main/backend/run_selection_analysis.py` runners to surface explicit `promotedAsset` or `nextAsset` payloads without burying them inside `result`, preserving request-side revision identity on `response.asset`
+- [x] Teach `3DAudioGraphs-main/frontend/main.cjs` to prefer explicit promoted asset identity for backend-call revision-ready or failed lifecycle publication, including safe same-asset pending revision promotion while still rejecting stale asset completions
+- [x] Add focused backend response-contract coverage in `tests/contract/test_data_manager.py` for promoted-asset publication and validate the edited Electron bridge with `node --check`
+
+## Newly Completed Non-Import Graph Producer Slice
+
+- [x] Add `3DAudioGraphs-main/backend/process_graph_asset.py` as a thin non-import compatibility runner around `process_audio_file` plus manifest upsert so an existing source audio file can publish a new graph revision through one real command path
+- [x] Register `graph/process_asset` in `services/local_integration/bootstrap_service.py` and `services/local_integration/service_runtime.py` so the persistent service and bootstrap fallback can both execute the new manifest-writing producer as a structured runner job
+- [x] Return `promotedAsset` from the new `graph/process_asset` command and cover it with focused runner and service contract tests in `tests/contract/test_data_manager.py` and `tests/contract/test_local_integration_service_runtime.py`
+- [x] Expose `graph:process-asset` through Electron main and preload so the shell bridge can invoke the new producer and publish `asset/revision_ready` from the returned `promotedAsset` without forcing stale same-asset promotions
+- [x] Add a first live renderer caller in `3DAudioGraphs-main/frontend/src/main.js` so `Mode Audio -> Regenerate MFCC / Process Current Asset` invokes `graph:process-asset` for the selected asset snapshot, persists the MFCC toggle as a sticky preference, and applies the promoted revision through the canonical local-integration asset path
+
 ## Newly Completed Cross-App Control Surface Slice
 
 - [x] Audit the merged Electron shell, backend monitor, and AudioOnsetFinder companion controls in `docs/merged_control_surface_audit.md`
@@ -213,6 +231,10 @@ Last updated: 2026-05-19
 - Focused Step 8 canonical read-side validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py`, `node --check 3DAudioGraphs-main/frontend/main.cjs`, `node --check 3DAudioGraphs-main/frontend/preload.cjs`, `node --check 3DAudioGraphs-main/frontend/public/backend-call-monitor.js`, and `node --check 3DAudioGraphs-main/frontend/src/main.js`
 - Focused Step 8 revision lifecycle validation now also passes for `tests/contract/test_local_integration_service_runtime.py`, `tests/contract/test_audio_onset_shell_session.py`, and `AudioOnsetFinder-main/GUI/test_onset_editor.py` through the new dirty, failed, and ready command surface plus the onset-editor dirty-state publish hook
 - Focused Step 8 producer-completion validation now also passes for `tests/contract/test_audio_onset_shell_session.py`, `AudioOnsetFinder-main/GUI/test_onset_editor.py`, and `node --check 3DAudioGraphs-main/frontend/main.cjs` through the onset save-completion routing, save-failure routing, and Electron backend completion hooks
+- Focused Step 8 revision-identity contract validation now also passes for `tests/contract/test_data_manager.py` and `node --check 3DAudioGraphs-main/frontend/main.cjs` through the new backend `promotedAsset` response contract and Electron-side next-revision promotion guards
+- Focused Step 8 non-import graph-producer validation now also passes for `tests/contract/test_data_manager.py` and `tests/contract/test_local_integration_service_runtime.py` through the new `graph/process_asset` runner command, promoted-asset response, and structured service job path
+- Focused Step 8 Electron graph-producer bridge validation now also passes for `node --check 3DAudioGraphs-main/frontend/main.cjs` and `node --check 3DAudioGraphs-main/frontend/preload.cjs` through the new `graph:process-asset` IPC command and revision-ready publication path
+- Focused Step 8 renderer graph-producer validation now also passes for `node --check 3DAudioGraphs-main/frontend/src/main.js`, `node --check 3DAudioGraphs-main/frontend/src/app/processCurrentAssetControl.js`, and `node tests/contract/test_process_current_asset_ui_smoke.js` through the sticky `Mode Audio -> Regenerate MFCC / Process Current Asset` control path and promoted-asset request shaping
 - Focused Step 7 close-out validation now passes for `tests/contract/test_data_manager.py` plus the AudioOnsetFinder writer/Excel/pipeline bundle (`tests/test_shared_output_writers.py`, `tests/test_onset_exports.py`, `tests/test_excel_onset_io.py`, `tests/test_pipeline_file_selection.py`)
-- Current implementation phase: Step 6 and Step 7 are complete, and Step 8 is now in progress through the service-owned AudioManager publish/read path, canonical backend-request path, cross-app control-surface polish, the first dirty or ready or failed revision lifecycle slice, and the first producer-completion routing slice
-- The highest-leverage next move is to carry explicit next-revision identity through remaining revision-producing completion paths, then expand coverage around revision switching and remaining shell-local cache collapse
+- Current implementation phase: Step 6 and Step 7 are complete, and Step 8 is now in progress through the service-owned AudioManager publish/read path, canonical backend-request path, cross-app control-surface polish, the first dirty or ready or failed revision lifecycle slice, the first producer-completion routing slice, the first revision-identity contract slice, and the first non-import graph-producer slice
+- The highest-leverage next move is to expand `Mode Audio -> Regenerate MFCC / Process Current Asset` from focused smoke coverage into interactive Electron coverage and teach the remaining real revision producers to emit manifest-backed `promotedAsset` identity, then expand coverage around revision switching and remaining shell-local cache collapse

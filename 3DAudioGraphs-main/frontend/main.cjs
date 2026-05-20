@@ -4,7 +4,7 @@ const { app, BrowserWindow, dialog, ipcMain, session } = require('electron');
 const fs = require('fs');
 const net = require('net');
 const path = require('path');
-const { pathToFileURL } = require('url');
+const { fileURLToPath, pathToFileURL } = require('url');
 
 const PRELOAD_ENTRY = path.join(__dirname, 'preload.cjs');
 const SHARED_GRAPH_PATHS_MODULE = path.resolve(__dirname, '..', '..', 'packages', 'wild_audio_worlds', 'graph', 'backend_paths.cjs');
@@ -1118,20 +1118,77 @@ function normalizeRevisionLifecycleAssetPayload(asset = null) {
     };
 }
 
-function doesRevisionLifecycleAssetMatchCurrentSession(asset = null) {
+function doesRevisionLifecycleAssetMatchCurrentSession(asset = null, {
+    allowPendingRevisionPromotion = false,
+    requestAsset = null,
+} = {}) {
     const normalizedAsset = normalizeRevisionLifecycleAssetPayload(asset);
     const currentAsset = normalizeRevisionLifecycleAssetPayload(currentAudioManagerSessionAsset());
     if (!normalizedAsset || !currentAsset) {
         return false;
     }
 
-    return normalizedAsset.assetId === currentAsset.assetId
-        && normalizedAsset.activeRevisionId === currentAsset.activeRevisionId;
+    if (normalizedAsset.assetId !== currentAsset.assetId) {
+        return false;
+    }
+
+    if (normalizedAsset.activeRevisionId === currentAsset.activeRevisionId) {
+        return true;
+    }
+
+    if (!allowPendingRevisionPromotion) {
+        return false;
+    }
+
+    const pendingRevisionId = typeof currentAudioManagerRevisionState()?.pendingRevisionId === 'string'
+        ? currentAudioManagerRevisionState().pendingRevisionId.trim()
+        : '';
+    if (!!pendingRevisionId && normalizedAsset.activeRevisionId === pendingRevisionId) {
+        return true;
+    }
+
+    const normalizedRequestAsset = normalizeRevisionLifecycleAssetPayload(requestAsset);
+    return !!normalizedRequestAsset
+        && normalizedRequestAsset.assetId === currentAsset.assetId
+        && normalizedRequestAsset.activeRevisionId === currentAsset.activeRevisionId;
+}
+
+function resolveBackendRevisionLifecycleAsset(response = null, fallbackAsset = null) {
+    const fallbackLifecycleAsset = normalizeRevisionLifecycleAssetPayload(fallbackAsset);
+    const responseAsset = normalizeRevisionLifecycleAssetPayload(response?.asset || null);
+    const promotedAsset = normalizeRevisionLifecycleAssetPayload(
+        response?.promotedAsset || response?.nextAsset || null,
+    );
+
+    if (promotedAsset) {
+        return fallbackLifecycleAsset
+            ? normalizeRevisionLifecycleAssetPayload({
+                ...fallbackLifecycleAsset,
+                ...promotedAsset,
+            })
+            : promotedAsset;
+    }
+
+    if (
+        fallbackLifecycleAsset
+        && responseAsset
+        && responseAsset.assetId === fallbackLifecycleAsset.assetId
+        && responseAsset.activeRevisionId !== fallbackLifecycleAsset.activeRevisionId
+    ) {
+        return normalizeRevisionLifecycleAssetPayload({
+            ...fallbackLifecycleAsset,
+            ...responseAsset,
+        });
+    }
+
+    return fallbackLifecycleAsset;
 }
 
 async function publishLocalIntegrationRevisionReady(asset = null, {
     launchReason = 'audio-manager-revision-ready',
     force = false,
+    allowPendingRevisionPromotion = false,
+    requestAsset = null,
 } = {}) {
     const normalizedAsset = normalizeRevisionLifecycleAssetPayload(asset || currentAudioManagerSessionAsset());
     const sessionId = typeof localIntegrationSessionCache?.sessionId === 'string'
@@ -1142,11 +1199,18 @@ async function publishLocalIntegrationRevisionReady(asset = null, {
     }
 
     const currentRevisionState = currentAudioManagerRevisionState();
+    const matchesPendingRevision = allowPendingRevisionPromotion
+        && typeof currentRevisionState.pendingRevisionId === 'string'
+        && currentRevisionState.pendingRevisionId.trim() !== ''
+        && normalizedAsset.activeRevisionId === currentRevisionState.pendingRevisionId.trim();
     if (!force) {
-        if (!doesRevisionLifecycleAssetMatchCurrentSession(normalizedAsset)) {
+        if (!doesRevisionLifecycleAssetMatchCurrentSession(normalizedAsset, {
+            allowPendingRevisionPromotion,
+            requestAsset,
+        })) {
             return null;
         }
-        if (currentRevisionState.isDirty) {
+        if (currentRevisionState.isDirty && !matchesPendingRevision) {
             return null;
         }
     }
@@ -1169,6 +1233,8 @@ async function publishLocalIntegrationRevisionFailed({
     isDirty = null,
     launchReason = 'audio-manager-revision-failed',
     force = false,
+    allowPendingRevisionPromotion = false,
+    requestAsset = null,
 } = {}) {
     const normalizedAsset = normalizeRevisionLifecycleAssetPayload(asset || currentAudioManagerSessionAsset());
     const sessionId = typeof localIntegrationSessionCache?.sessionId === 'string'
@@ -1178,7 +1244,10 @@ async function publishLocalIntegrationRevisionFailed({
         return null;
     }
 
-    if (!force && !doesRevisionLifecycleAssetMatchCurrentSession(normalizedAsset)) {
+    if (!force && !doesRevisionLifecycleAssetMatchCurrentSession(normalizedAsset, {
+        allowPendingRevisionPromotion,
+        requestAsset,
+    })) {
         return null;
     }
 
@@ -1358,7 +1427,7 @@ async function flushQueuedLocalIntegrationStateSync() {
 }
 
 function scheduleLocalIntegrationStateSync(nextState) {
-    if (!backendCallMonitorIpc) {
+    if (!nextState || typeof nextState !== 'object') {
         return;
     }
 
@@ -2163,6 +2232,90 @@ function runRecordedAudioImport(requestPayload) {
     });
 }
 
+function resolveGraphProcessAssetAudioPath(pathValue = '') {
+    const normalizedPath = typeof pathValue === 'string' ? pathValue.trim() : '';
+    if (!normalizedPath) {
+        return '';
+    }
+
+    if (/^file:/i.test(normalizedPath)) {
+        try {
+            return fileURLToPath(normalizedPath);
+        } catch (_error) {
+            return '';
+        }
+    }
+
+    if (path.isAbsolute(normalizedPath)) {
+        return normalizedPath;
+    }
+
+    const normalizedRelativePath = normalizedPath.replace(/^\.[/\\]/, '');
+    if (/^audio_assets([/\\]|$)/i.test(normalizedRelativePath)) {
+        return path.resolve(__dirname, 'public', normalizedRelativePath);
+    }
+
+    return path.resolve(getProjectRoot(), normalizedRelativePath);
+}
+
+function resolveGraphProcessAssetRequest(requestPayload = {}) {
+    const currentAsset = currentAudioManagerSessionAsset();
+    const requestAsset = normalizeRevisionLifecycleAssetPayload(requestPayload?.asset || currentAsset);
+    const audioPath = resolveGraphProcessAssetAudioPath(
+        requestPayload?.audioPath
+        || requestAsset?.sourceAudioPath
+        || requestAsset?.audioUrl
+        || '',
+    );
+    const derivedAssetLabel = audioPath
+        ? path.basename(audioPath, path.extname(audioPath))
+        : '';
+    const assetLabel = typeof requestPayload?.assetLabel === 'string' && requestPayload.assetLabel.trim() !== ''
+        ? requestPayload.assetLabel.trim()
+        : (requestAsset?.assetLabel || requestAsset?.label || derivedAssetLabel);
+
+    return {
+        audioPath,
+        assetLabel,
+        includeMfcc: requestPayload?.includeMfcc !== false,
+        requestAsset,
+    };
+}
+
+function runGraphProcessAsset(requestPayload, {
+    requestAsset = null,
+} = {}) {
+    return new Promise((resolve, reject) => {
+        void (async () => {
+            try {
+                await ensureLocalIntegrationSession({
+                    launchReason: 'graph-process-asset-bootstrap',
+                    asset: requestAsset,
+                });
+                const integrationResponse = await runLocalIntegrationServiceCommand('graph/process_asset', requestPayload, {
+                    launchReason: 'graph-process-asset-run',
+                    asset: requestAsset,
+                });
+                const response = integrationResponse?.response || null;
+                if (response?.ok === false) {
+                    const failure = withFormattedBackendFailure(response, {
+                        errorCode: response?.errorCode || 'backend-analysis-failed',
+                    });
+                    const error = new Error(failure.error);
+                    error.payload = failure;
+                    error.errorCode = failure.errorCode;
+                    reject(error);
+                    return;
+                }
+
+                resolve(response || buildBackendFailure('backend-no-payload'));
+            } catch (error) {
+                reject(error);
+            }
+        })();
+    });
+}
+
 function createBackendMonitorWindow() {
     if (backendMonitorWindow && !backendMonitorWindow.isDestroyed()) {
         backendMonitorWindow.focus();
@@ -2319,10 +2472,13 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
                 savedAudioPath: response?.savedAudioPath || null,
             },
         });
-        await safelyPublishLocalIntegrationRevisionReady(response?.asset || null, {
+        await safelyPublishLocalIntegrationRevisionReady(
+            resolveBackendRevisionLifecycleAsset(response, response?.asset || null),
+            {
             launchReason: 'recorded-audio-revision-ready',
             force: true,
-        });
+            },
+        );
         return response;
     } catch (error) {
         const failure = error?.payload
@@ -2338,6 +2494,83 @@ ipcMain.handle('recorded-audio:import', async (_event, requestPayload = {}) => {
             failure,
         }, {
             details: failure.details || failure.stderr || failure.traceback || failure.stdout || null,
+        });
+        return failure;
+    }
+});
+
+ipcMain.handle('graph:process-asset', async (_event, requestPayload = {}) => {
+    const { audioPath, assetLabel, includeMfcc, requestAsset } = resolveGraphProcessAssetRequest(requestPayload);
+    if (!audioPath) {
+        const failure = withFormattedBackendFailure(buildBackendFailure('backend-asset-missing', {
+            error: 'No audio asset is available for graph processing.',
+        }));
+        appendBackendLog({
+            level: 'error',
+            scope: 'bridge',
+            message: failure.error,
+            details: {
+                command: 'graph/process_asset',
+            },
+        });
+        return failure;
+    }
+
+    appendBackendLog({
+        level: 'info',
+        scope: 'bridge',
+        message: 'Graph asset processing started.',
+        details: {
+            command: 'graph/process_asset',
+            assetId: requestAsset?.assetId || null,
+            audioPath,
+        },
+    });
+
+    try {
+        const response = await runGraphProcessAsset({
+            audioPath,
+            assetLabel,
+            includeMfcc,
+            projectRoot: getProjectRoot(),
+        }, {
+            requestAsset,
+        });
+        const promotedAsset = resolveBackendRevisionLifecycleAsset(response, requestAsset);
+        appendBackendLog({
+            level: 'info',
+            scope: 'bridge',
+            message: 'Graph asset processing completed.',
+            details: {
+                command: 'graph/process_asset',
+                assetId: promotedAsset?.assetId || response?.asset?.assetId || response?.asset?.id || null,
+                revisionId: promotedAsset?.activeRevisionId || response?.asset?.revisionId || null,
+                processedAudioPath: response?.processedAudioPath || audioPath,
+            },
+        });
+        if (response?.promotedAsset || response?.nextAsset) {
+            await safelyPublishLocalIntegrationRevisionReady(promotedAsset, {
+                launchReason: 'graph-process-asset-revision-ready',
+                requestAsset,
+            });
+        }
+        return response;
+    } catch (error) {
+        const failure = error?.payload
+            ? error.payload
+            : withFormattedBackendFailure(buildBackendFailure(error?.errorCode || 'backend-analysis-failed', {
+                error: error?.message || 'Graph asset processing failed.',
+                stderr: error?.stderr || '',
+            }));
+        appendBackendLog({
+            level: 'error',
+            scope: 'bridge',
+            message: failure.error || 'Graph asset processing failed.',
+            details: {
+                command: 'graph/process_asset',
+                assetId: requestAsset?.assetId || null,
+                audioPath,
+            },
         });
         return failure;
     }
@@ -2433,6 +2666,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             const failure = withFormattedBackendFailure(response, {
                 errorCode: response?.errorCode || 'backend-analysis-failed',
             });
+            const lifecycleAsset = resolveBackendRevisionLifecycleAsset(failure, requestAsset);
             appendBackendEventLog('backend-call-failed', {
                 failure,
             }, {
@@ -2440,9 +2674,10 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             });
             sendToBackendMonitor('backend-call-monitor:call-failed', failure);
             await safelyPublishLocalIntegrationRevisionFailed({
-                asset: requestAsset,
+                asset: lifecycleAsset,
                 error: failure.error || 'The backend action failed.',
                 launchReason: 'backend-call-revision-failed',
+                allowPendingRevisionPromotion: true,
             });
             sendToMainWindow('backend-call:completed', failure);
             return failure;
@@ -2453,6 +2688,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             ...response,
             saveResult,
         };
+        const lifecycleAsset = resolveBackendRevisionLifecycleAsset(completedResponse, requestAsset);
         appendBackendEventLog(saveResult.saved ? 'backend-call-completed-saved' : 'backend-call-completed-unsaved', {
             analysisType: requestPayload.analysisType,
             artifactLabel: saveResult.artifactLabel || 'output',
@@ -2466,8 +2702,9 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
             },
         });
         sendToBackendMonitor('backend-call-monitor:call-finished', completedResponse);
-        await safelyPublishLocalIntegrationRevisionReady(requestAsset, {
+        await safelyPublishLocalIntegrationRevisionReady(lifecycleAsset, {
             launchReason: 'backend-call-revision-ready',
+            allowPendingRevisionPromotion: true,
         });
         sendToMainWindow('backend-call:completed', completedResponse);
         return completedResponse;
@@ -2480,6 +2717,7 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
                 error: error?.message || undefined,
                 stderr: error?.stderr || '',
             }));
+        const lifecycleAsset = resolveBackendRevisionLifecycleAsset(failure, requestAsset);
         appendBackendEventLog('backend-call-failed', {
             failure,
         }, {
@@ -2487,9 +2725,10 @@ ipcMain.handle('backend-call:run', async (_event, runOptions = {}) => {
         });
         sendToBackendMonitor('backend-call-monitor:call-failed', failure);
         await safelyPublishLocalIntegrationRevisionFailed({
-            asset: requestAsset,
+            asset: lifecycleAsset,
             error: failure.error || error?.message || 'The backend action failed.',
             launchReason: 'backend-call-revision-failed',
+            allowPendingRevisionPromotion: true,
         });
         sendToMainWindow('backend-call:completed', failure);
         return failure;
@@ -2502,7 +2741,9 @@ function createWindow() {
     if (isDevMode()) {
         // Load from Vite dev server during development
         loadWindowEntry(mainWindow);
-        mainWindow.webContents.openDevTools();
+        if (process.env.WAW_ELECTRON_SMOKE_TEST !== '1') {
+            mainWindow.webContents.openDevTools();
+        }
     } else {
         // Load from built dist in production
         loadWindowEntry(mainWindow);

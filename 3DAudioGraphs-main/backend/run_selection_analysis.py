@@ -83,6 +83,10 @@ def _coerce_int(value, fallback=0):
     return number
 
 
+def _mapping_or_empty(value):
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _clamp(value, lower, upper):
     return max(lower, min(upper, value))
 
@@ -220,6 +224,34 @@ def _resolve_asset_audio_filename(asset_payload, bio_payload=None):
 
 def _relative_output_path(path_value):
     return _data_manager().relative_to_project_root(path_value)
+
+
+def _build_response_asset_payload(asset_payload, *, audio_path=None):
+    base_asset = _mapping_or_empty(asset_payload)
+    asset_id = str(base_asset.get("assetId") or base_asset.get("id") or "").strip()
+    asset_label = str(base_asset.get("assetLabel") or base_asset.get("label") or "").strip()
+    active_revision_id = str(base_asset.get("activeRevisionId") or base_asset.get("revisionId") or "").strip()
+    audio_path_value = (
+        _relative_output_path(audio_path)
+        if isinstance(audio_path, Path)
+        else str(base_asset.get("audioPath") or "").strip()
+    )
+    response_asset = {
+        **base_asset,
+        "id": str(base_asset.get("id") or asset_id or "").strip() or None,
+        "assetId": asset_id or (str(base_asset.get("id") or "").strip() or None),
+        "label": str(base_asset.get("label") or asset_label or "").strip() or None,
+        "assetLabel": asset_label or (str(base_asset.get("label") or "").strip() or None),
+        "audioUrl": str(base_asset.get("audioUrl") or "").strip() or None,
+        "audioPath": audio_path_value or None,
+        "activeRevisionId": active_revision_id or None,
+        "revisionId": str(base_asset.get("revisionId") or active_revision_id or "").strip() or None,
+    }
+    return {
+        key: value
+        for key, value in response_asset.items()
+        if value is not None
+    }
 
 
 def _normalize_onset_times(onset_times):
@@ -806,6 +838,25 @@ def run():
             if key != "saveResult"
         }
 
+    promoted_asset = None
+    if isinstance(result, dict):
+        if isinstance(result.get("promotedAsset"), dict):
+            promoted_asset = result.get("promotedAsset")
+            result = {
+                key: value
+                for key, value in result.items()
+                if key != "promotedAsset"
+            }
+        elif isinstance(result.get("nextAsset"), dict):
+            promoted_asset = result.get("nextAsset")
+            result = {
+                key: value
+                for key, value in result.items()
+                if key != "nextAsset"
+            }
+
+    response_asset = _build_response_asset_payload(asset, audio_path=audio_path)
+
     response = {
         "ok": True,
         "analysisType": analysis_type,
@@ -814,12 +865,7 @@ def run():
             "requestedAt": (payload.get("callMeta") or {}).get("requestedAt"),
             "completedAt": datetime.now(timezone.utc).isoformat(),
         },
-        "asset": {
-            "id": asset.get("id"),
-            "label": asset.get("label"),
-            "audioUrl": asset.get("audioUrl"),
-            "audioPath": str(audio_path.relative_to(_project_root())) if isinstance(audio_path, Path) else None,
-        },
+        "asset": response_asset,
         "selection": {
             **selection,
             "resolvedTimeWindow": selection_window,
@@ -828,6 +874,11 @@ def run():
         "saveOptions": payload.get("saveOptions") or {},
         "result": result,
     }
+    if promoted_asset:
+        response["promotedAsset"] = _build_response_asset_payload({
+            **response_asset,
+            **_mapping_or_empty(promoted_asset),
+        })
     response["saveResult"] = save_result_override or _save_result(response, save_artifact=save_artifact)
     return _rounded(response)
 

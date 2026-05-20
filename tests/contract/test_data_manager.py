@@ -23,9 +23,12 @@ if str(GRAPH_BACKEND_DIR) not in sys.path:
 from main import process_audio_file  # noqa: E402
 from bioacoustics_workbook import sync_workbook_onsets  # noqa: E402
 from import_recorded_audio import import_recorded_audio  # noqa: E402
+from process_graph_asset import process_graph_asset  # noqa: E402
 from run_selection_analysis import (  # noqa: E402
+    BIOACOUSTICS_RUNNERS,
     _resolve_bio_sync_output_path,
     _save_result,
+    run,
 )
 from wild_audio_worlds.data import DataManager  # noqa: E402
 from wild_audio_worlds.data.audio_asset_store import (  # noqa: E402
@@ -306,6 +309,51 @@ def test_import_recorded_audio_routes_base64_source_publication_through_data_man
     assert recorded["projectRoot"] == tmp_path
     assert recorded["manifestPath"] == tmp_path / "frontend" / "public" / "audio_assets_manifest.json"
     assert recorded["manifestEntry"]["label"] == "Marsh Take"
+    assert result["asset"]["revisionId"] == "rev-0001"
+    assert result["promotedAsset"] == result["asset"]
+
+
+def test_process_graph_asset_returns_promoted_asset_and_manifest_entry(tmp_path, monkeypatch):
+    source_audio_path = _write_source_audio(tmp_path, "marsh.wav")
+    recorded = {}
+
+    def _fake_process_audio_file(audio_path, *, include_mfcc, display_name, project_root, logger=None):
+        recorded["audioPath"] = Path(audio_path)
+        recorded["includeMfcc"] = include_mfcc
+        recorded["displayName"] = display_name
+        recorded["projectRoot"] = Path(project_root)
+        return {
+            "id": "marsh-wav",
+            "assetId": "marsh-wav",
+            "label": display_name,
+            "revisionId": "rev-0002",
+            "audioUrl": "./audio_assets/marsh-wav/rev-0002/marsh.wav",
+        }
+
+    def _fake_upsert_manifest_entry(manifest_path, manifest_entry):
+        recorded["manifestPath"] = Path(manifest_path)
+        recorded["manifestEntry"] = manifest_entry
+        return [manifest_entry]
+
+    monkeypatch.setattr("process_graph_asset.process_audio_file", _fake_process_audio_file)
+    monkeypatch.setattr("process_graph_asset.upsert_manifest_entry", _fake_upsert_manifest_entry)
+
+    result = process_graph_asset({
+        "audioPath": str(source_audio_path),
+        "assetLabel": "Marsh Dawn",
+        "includeMfcc": False,
+        "projectRoot": str(tmp_path),
+    })
+
+    assert recorded["audioPath"] == source_audio_path
+    assert recorded["includeMfcc"] is False
+    assert recorded["displayName"] == "Marsh Dawn"
+    assert recorded["projectRoot"] == tmp_path
+    assert recorded["manifestPath"] == tmp_path / "frontend" / "public" / "audio_assets_manifest.json"
+    assert recorded["manifestEntry"]["revisionId"] == "rev-0002"
+    assert result["asset"]["assetId"] == "marsh-wav"
+    assert result["promotedAsset"] == result["asset"]
+    assert Path(result["processedAudioPath"]) == source_audio_path
 
 
 def test_run_selection_analysis_save_result_routes_exports_through_data_manager(tmp_path, monkeypatch):
@@ -354,6 +402,59 @@ def test_run_selection_analysis_save_result_routes_exports_through_data_manager(
     assert wav_save_result["path"] == "data/exports/backend_calls/marsh-dawn_export-time-slice-audio_wavreq1.wav"
     assert (tmp_path / json_save_result["path"]).exists()
     assert (tmp_path / wav_save_result["path"]).exists()
+
+
+def test_run_selection_analysis_surfaces_promoted_asset_for_revision_producers(monkeypatch):
+    request_payload = {
+        "analysisType": "bioacoustics-import-workbook",
+        "asset": {
+            "id": "asset-marsh-001",
+            "assetId": "asset-marsh-001",
+            "label": "Marsh Dawn",
+            "audioUrl": "./audio_assets/asset-marsh-001/rev-0007/marsh.wav",
+            "activeRevisionId": "rev-0007",
+            "revisionId": "rev-0007",
+        },
+        "bioacoustics": {
+            "targetLabel": "Current Selection",
+        },
+        "callMeta": {
+            "requestId": "promote-001",
+            "requestedAt": "2026-05-19T12:00:00+00:00",
+        },
+        "saveOptions": {
+            "mode": "none",
+            "label": "Current Selection",
+        },
+    }
+
+    monkeypatch.setattr("run_selection_analysis._read_payload", lambda: request_payload)
+    monkeypatch.setitem(
+        BIOACOUSTICS_RUNNERS,
+        "bioacoustics-import-workbook",
+        lambda _payload: {
+            "summary": {
+                "onsetCount": 3,
+            },
+            "promotedAsset": {
+                "assetId": "asset-marsh-001",
+                "audioUrl": "./audio_assets/asset-marsh-001/rev-0008/marsh.wav",
+                "activeRevisionId": "rev-0008",
+                "revisionId": "rev-0008",
+            },
+        },
+    )
+
+    response = run()
+
+    assert response["ok"] is True
+    assert response["asset"]["activeRevisionId"] == "rev-0007"
+    assert response["asset"]["revisionId"] == "rev-0007"
+    assert response["promotedAsset"]["assetId"] == "asset-marsh-001"
+    assert response["promotedAsset"]["activeRevisionId"] == "rev-0008"
+    assert response["promotedAsset"]["revisionId"] == "rev-0008"
+    assert response["promotedAsset"]["audioUrl"].endswith("/rev-0008/marsh.wav")
+    assert "promotedAsset" not in response["result"]
 
 
 def test_bio_sync_output_fallback_and_workbook_write_route_through_data_manager(tmp_path, monkeypatch):

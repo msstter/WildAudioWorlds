@@ -68,6 +68,7 @@ def import_recorded_audio(payload: dict) -> dict:
     return {
         "ok": True,
         "asset": manifest_entry,
+        "promotedAsset": manifest_entry,
         "savedAudioPath": str(audio_path),
         "manifestPath": paths["manifest_path"],
     }
